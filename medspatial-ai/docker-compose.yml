@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: medspatial-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/medspatial.db
+      - UPLOAD_DIR=./data/uploads
+      - VOLUME_DIR=./data/volumes
+      - MESH_DIR=./data/meshes
+      - ANALYSIS_DIR=./data/analysis
+      - MODEL_DIR=./models
+      - DEBUG=false
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  frontend:
+    build: ./frontend
+    container_name: medspatial-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  data:
+  models:
