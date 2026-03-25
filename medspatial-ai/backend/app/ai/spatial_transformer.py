@@ -70,20 +70,37 @@ class VolumetricPositionEncoding(nn.Module):
             h_emb = self.height_embed(h_idx)  # (gh, D/3)
             w_emb = self.width_embed(w_idx)  # (gw, D/3)
 
-            # Create 3D positional grid
-            pos_3d = torch.zeros(gd * gh * gw, D, device=x.device)
+            # Determine if CLS token is present in x (common in transformer pipelines)
+            has_cls = (N == gd * gh * gw + 1)
+
+            # Create positional encoding for patch tokens and optional CLS token.
+            pos_3d = torch.zeros(N, D, device=x.device)
             for i in range(gd):
                 for j in range(gh):
                     for k in range(gw):
-                        idx = i * gh * gw + j * gw + k
-                        if idx < N:
-                            pos_3d[idx] = torch.cat([d_emb[i], h_emb[j], w_emb[k]])
+                        patch_idx = i * gh * gw + j * gw + k
+                        token_idx = patch_idx + 1 if has_cls else patch_idx
+                        if token_idx < N:
+                            pos_3d[token_idx] = torch.cat([d_emb[i], h_emb[j], w_emb[k]])
 
-            pos_3d = pos_3d[:N].unsqueeze(0).expand(B, -1, -1)
-            x = x + pos_3d
+            # Keep CLS token at zero if present (no positional bias)
+            x = x + pos_3d.unsqueeze(0)
 
         # Add sinusoidal + learnable encoding
-        x = x + self.sinusoidal_pe[:N].unsqueeze(0) + self.learnable_pe[:, :N, :]
+        if N > self.sinusoidal_pe.shape[0]:
+            # Expand or wrap-around positional encodings for very large grids.
+            repeat_count = (N + self.sinusoidal_pe.shape[0] - 1) // self.sinusoidal_pe.shape[0]
+            sinusoidal = self.sinusoidal_pe.repeat(repeat_count, 1)[:N]
+        else:
+            sinusoidal = self.sinusoidal_pe[:N]
+
+        if N > self.learnable_pe.shape[1]:
+            repeat_count = (N + self.learnable_pe.shape[1] - 1) // self.learnable_pe.shape[1]
+            learnable = self.learnable_pe.repeat(1, repeat_count, 1)[:, :N, :]
+        else:
+            learnable = self.learnable_pe[:, :N, :]
+
+        x = x + sinusoidal.unsqueeze(0).to(x.device) + learnable.to(x.device)
         return x
 
 

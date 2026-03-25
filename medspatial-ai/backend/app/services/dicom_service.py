@@ -108,19 +108,37 @@ class DicomService:
             float(pixel_spacing[1]),
         ])
 
-        # Build 3D volume
+        # Build 3D volume. Handle single-frame (2D) and multi-frame (3D) DICOMs safely.
         slices = []
         for ds in dicom_files:
-            pixel_array = ds.pixel_array.astype(np.float64)
-
-            # Convert to Hounsfield Units
+            pixel_array = ds.pixel_array
             slope = float(getattr(ds, "RescaleSlope", 1.0))
             intercept = float(getattr(ds, "RescaleIntercept", 0.0))
-            hu_slice = pixel_array * slope + intercept
 
-            slices.append(hu_slice)
+            if pixel_array.ndim == 2:
+                hu_slice = pixel_array.astype(np.float32) * slope + intercept
+                slices.append(hu_slice)
 
-        volume = np.stack(slices, axis=0)
+            elif pixel_array.ndim == 3:
+                # Multi-frame DICOM may already contain a 3D volume in one file.
+                # Flatten into a consistent list of 2D slices.
+                for frame in pixel_array:
+                    hu_frame = frame.astype(np.float32) * slope + intercept
+                    slices.append(hu_frame)
+
+            else:
+                raise ValueError(
+                    f"Unsupported pixel array dimensions {pixel_array.shape} in DICOM series"
+                )
+
+        if not slices:
+            raise ValueError(f"No image frames available in DICOM series at {directory}")
+
+        volume = np.stack(slices, axis=0).astype(np.float32)
+
+        if volume.ndim != 3:
+            raise ValueError(f"Expected 3D volume but got shape {volume.shape}")
+
         logger.info(f"Built volume: shape={volume.shape}, spacing={voxel_spacing}")
         return volume, voxel_spacing
 

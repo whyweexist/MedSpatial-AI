@@ -38,7 +38,18 @@ class ReconstructionService:
         """
         volume, voxel_spacing = self.dicom_svc.load_dicom_series(upload_dir)
 
-        # Apply noise reduction
+        # Enforce 3D volume format (in case a 4D stack is produced unintentionally)
+        if volume.ndim == 4 and volume.shape[0] == 1:
+            volume = volume[0]
+
+        if volume.ndim != 3:
+            raise ValueError(f"Expected a 3D volume, got shape {volume.shape}")
+
+        # Keep memory lower precision where feasible.
+        volume = volume.astype(np.float32, copy=False)
+
+        # Clip to plausible HU range before smoothing and meshing.
+        volume = self.volume_proc.clip_hu(volume)
         volume = self.volume_proc.denoise(volume)
 
         logger.info(f"Volume built: {volume.shape}, range [{volume.min():.0f}, {volume.max():.0f}] HU")
@@ -67,11 +78,16 @@ class ReconstructionService:
             step_size: marching cubes step size (higher = faster, lower resolution)
             voxel_spacing: [z,y,x] spacing for correct aspect ratio
         """
+        # Validate volume shape + type to avoid OOM from accidental extra dims.
+        if volume.ndim != 3:
+            raise ValueError(f"Expected 3D volume for mesh generation, got {volume.shape}")
+
+        vol = volume.astype(np.float32, copy=False)
+
         # Downsample for performance if volume is large
-        vol = volume
-        if max(volume.shape) > 256:
-            zoom_factors = [256 / s for s in volume.shape]
-            vol = ndimage.zoom(volume, zoom_factors, order=1)
+        if max(vol.shape) > 256:
+            zoom_factors = [256 / s for s in vol.shape]
+            vol = ndimage.zoom(vol, zoom_factors, order=1)
             if voxel_spacing is not None:
                 voxel_spacing = voxel_spacing / np.array(zoom_factors)
 
@@ -141,6 +157,11 @@ class ReconstructionService:
 
         layer_paths = {}
         mesh_dir_path = Path(mesh_dir)
+
+        if volume.ndim != 3:
+            raise ValueError(f"Expected 3D volume for layer generation, got {volume.shape}")
+
+        volume = volume.astype(np.float32, copy=False)
 
         for layer_name, config in layer_configs.items():
             try:

@@ -129,6 +129,51 @@ class TestDicomParser:
             pass  # Acceptable to raise
         print("✅ Invalid DICOM handling: passed")
 
+    def test_load_dicom_series_multipframe_default(self, tmp_path):
+        """Multi-frame DICOM must be flattened to a 3D volume by load_dicom_series."""
+        from app.services.dicom_service import DicomService
+
+        ds = Dataset()
+        ds.file_meta = Dataset()
+        ds.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+        ds.file_meta.MediaStorageSOPInstanceUID = "1.2.3.4.5.6.7.8.9.1"
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.file_meta.ImplementationVersionName = "MEDSPATIAL"
+
+        ds.is_implicit_VR = False
+        ds.is_little_endian = True
+        ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+        ds.SOPInstanceUID = "1.2.3.4.5.6.7.8.9.1"
+        ds.Modality = "CT"
+        ds.Rows = 64
+        ds.Columns = 64
+        ds.NumberOfFrames = 3
+        ds.BitsAllocated = 16
+        ds.BitsStored = 16
+        ds.HighBit = 15
+        ds.PixelRepresentation = 1
+        ds.PhotometricInterpretation = "MONOCHROME2"
+        ds.RescaleSlope = 1.0
+        ds.RescaleIntercept = -1024.0
+        ds.PixelSpacing = [1.0, 1.0]
+        ds.SliceThickness = 1.0
+        ds.ImagePositionPatient = [0.0, 0.0, 0.0]
+
+        frames = np.stack([np.full((64, 64), i, dtype=np.int16) for i in range(3)], axis=0)
+        ds.PixelData = frames.tobytes()
+
+        dcm_path = tmp_path / "multi_frame.dcm"
+        pydicom.dcmwrite(dcm_path, ds, write_like_original=False)
+
+        svc = DicomService()
+        volume, spacing = svc.load_dicom_series(str(tmp_path))
+
+        assert volume.shape == (3, 64, 64)
+        assert np.all(volume[0] == (0 - 1024))
+        assert np.all(volume[1] == (1 - 1024))
+        assert np.all(volume[2] == (2 - 1024))
+        print("✅ Multi-frame DICOM flattening: passed")
+
 
 # ─────────────────────────────────────────────────────────────────
 # 2. AI Model Forward Pass Tests
@@ -147,6 +192,22 @@ class TestModelForwardPasses:
         assert cls_feat.shape[0] == 1
         assert cls_feat.shape[-1] == 64
         print(f"✅ SpatialTransformer3D: cls={cls_feat.shape}, spatial={spatial_feat.shape}")
+
+    def test_spatial_transformer_position_encoding_with_cls(self):
+        """SpatialTransformer3D pos encoding should handle cls token and large patch count."""
+        from app.ai.spatial_transformer import create_spatial_transformer
+
+        x = torch.rand(1, 1, 129, 129, 129)
+        model = create_spatial_transformer(embed_dim=64, num_heads=4, num_layers=2)
+        model.eval()
+
+        with torch.no_grad():
+            cls_feat, spatial_feat = model.extract_features(x)
+
+        assert cls_feat.shape == (1, 64)
+        assert spatial_feat.shape[1] >= 4096
+        assert not torch.isnan(spatial_feat).any()
+        print(f"✅ SpatialTransformer3D cls+patch pos encoding works shape {spatial_feat.shape}")
 
     def test_depth_lifter_output_shape(self):
         """DepthLifter should convert 2D X-ray to pseudo-3D volume."""
