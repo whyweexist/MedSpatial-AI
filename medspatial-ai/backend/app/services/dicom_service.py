@@ -20,8 +20,29 @@ class DicomService:
         if not file_paths:
             return {}
 
-        # Read the first file for series-level metadata
-        ds = pydicom.dcmread(str(file_paths[0]), stop_before_pixels=True)
+        # # Read the first file for series-level metadata
+        # ds = pydicom.dcmread(str(file_paths[0]), stop_before_pixels=True)
+        try:
+            # Read the first file for series-level metadata
+            ds = pydicom.dcmread(str(file_paths[0]), stop_before_pixels=True)
+        except pydicom.errors.InvalidDicomError:
+            # Fallback for generic images (PNG, JPEG, etc.)
+            import skimage.io
+            try:
+                img = skimage.io.imread(str(file_paths[0]))
+                return {
+                    "modality": "XR",
+                    "body_part": "Unknown",
+                    "rows": int(img.shape[0]),
+                    "columns": int(img.shape[1]),
+                    "patient_id": "image_upload",
+                    "study_description": "Generic Image Upload",
+                    "series_description": "Image",
+                    "slice_thickness": 1.0,
+                    "bits_stored": 8,
+                }
+            except Exception:
+                return {}
 
         metadata = {
             "patient_id": str(getattr(ds, "PatientID", "")),
@@ -79,7 +100,42 @@ class DicomService:
                     continue
 
         if not dicom_files:
-            raise ValueError(f"No valid DICOM files found in {directory}")
+            # raise ValueError(f"No valid DICOM files found in {directory}")
+            image_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+            image_files = []
+            for fname in os.listdir(directory):
+                if Path(fname).suffix.lower() in image_extensions:
+                    image_files.append(dir_path / fname)
+
+            if not image_files:
+                raise ValueError(f"No valid DICOM or Image files found in {directory}")
+
+            import skimage.io
+            from skimage.color import rgb2gray
+            
+            # Sort images to maintain slice order if it's a volume
+            image_files.sort()
+            
+            slices = []
+            for item in image_files:
+                img = skimage.io.imread(str(item))
+                if img.ndim == 3:
+                    # Convert RGB to grayscale (values 0-1)
+                    img = rgb2gray(img)
+                elif img.max() > 1.0:
+                    # Normalize if already grayscale but outside 0-1
+                    img = img.astype(np.float32) / 255.0
+
+                # Map to pseudo-HU for X-ray / general image [-1000 to +1000 or similar]
+                # Dark areas in typical images might be air (low HU), bright areas bone (high HU)
+                # If it's a photo, medical defaults might invert or shift this, but let's map [0,1] → [-1000, 1000]
+                img_hu = img * 2000.0 - 1000.0
+                slices.append(img_hu.astype(np.float32))
+
+            volume = np.stack(slices, axis=0)
+            voxel_spacing = np.array([1.0, 1.0, 1.0])
+            logger.info(f"Loaded {len(slices)} generic image(s) into volume: shape={volume.shape}")
+            return volume, voxel_spacing
 
         # Sort by ImagePositionPatient[2] (z-axis) or InstanceNumber
         def sort_key(ds):
@@ -134,7 +190,19 @@ class DicomService:
         if not slices:
             raise ValueError(f"No image frames available in DICOM series at {directory}")
 
-        volume = np.stack(slices, axis=0).astype(np.float32)
+        # volume = np.stack(slices, axis=0).astype(np.float32)
+        # Filter out scout/localizer slices by enforcing the most common shape
+        from collections import Counter
+        shapes = [s.shape for s in slices]
+        most_common_shape = Counter(shapes).most_common(1)[0][0]
+        
+        filtered_slices = [s for s in slices if s.shape == most_common_shape]
+        
+        if len(filtered_slices) < len(slices):
+            logger.warning(f"Discarded {len(slices) - len(filtered_slices)} slices with non-matching shapes (e.g. scouts).")
+
+        volume = np.stack(filtered_slices, axis=0).astype(np.float32)
+
 
         if volume.ndim != 3:
             raise ValueError(f"Expected 3D volume but got shape {volume.shape}")

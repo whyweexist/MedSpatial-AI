@@ -5,23 +5,23 @@
 
 :root {
   /* ── Color Palette ─────────────────────────────────────────── */
-  --bg-primary: #0a0e1a;
-  --bg-secondary: #111827;
-  --bg-tertiary: #1a2235;
-  --bg-elevated: #1e293b;
-  --bg-glass: rgba(17, 24, 39, 0.85);
-  --bg-hover: rgba(99, 102, 241, 0.08);
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
+  --bg-elevated: #e2e8f0;
+  --bg-glass: rgba(255, 255, 255, 0.9);
+  --bg-hover: rgba(99, 102, 241, 0.05);
 
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
+  --text-primary: #1e293b;
+  --text-secondary: #475569;
   --text-muted: #64748b;
-  --text-accent: #818cf8;
+  --text-accent: #6366f1;
 
   --accent-primary: #6366f1;
   --accent-primary-light: #818cf8;
   --accent-secondary: #06b6d4;
   --accent-gradient: linear-gradient(135deg, #6366f1 0%, #06b6d4 100%);
-  --accent-glow: 0 0 20px rgba(99, 102, 241, 0.3);
+  --accent-glow: 0 0 20px rgba(99, 102, 241, 0.2);
 
   --success: #10b981;
   --warning: #f59e0b;
@@ -35,9 +35,9 @@
   --severity-critical: #dc2626;
 
   /* ── Borders ───────────────────────────────────────────────── */
-  --border-subtle: rgba(148, 163, 184, 0.08);
-  --border-default: rgba(148, 163, 184, 0.15);
-  --border-accent: rgba(99, 102, 241, 0.3);
+  --border-subtle: rgba(148, 163, 184, 0.2);
+  --border-default: rgba(148, 163, 184, 0.3);
+  --border-accent: rgba(99, 102, 241, 0.4);
 
   /* ── Spacing ───────────────────────────────────────────────── */
   --space-xs: 4px;
@@ -59,10 +59,10 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
   /* ── Shadows ───────────────────────────────────────────────── */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 30px rgba(99, 102, 241, 0.15);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.2);
+  --shadow-glow: 0 0 30px rgba(99, 102, 241, 0.1);
 
   /* ── Transitions ───────────────────────────────────────────── */
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -127,12 +127,21 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 56px;
-  padding: 0 var(--space-lg);
-  background: var(--bg-glass);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border-subtle);
+  height: 66px;
+  padding: 0 24px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(22px);
+  position: sticky;
+  top: 0;
   z-index: 100;
+}
+
+.header-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
 }
 
 .header-brand {
@@ -265,12 +274,26 @@ body {
   border-top: 1px solid var(--border-subtle);
 }
 
-/* ── Right Panel (Chat) ───────────────────────────────────────── */
+/* ── Right Panel ───────────────────────────────────────── */
 .right-panel {
   width: 380px;
   min-width: 380px;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.right-panel-controls {
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.right-panel-bottom {
+  flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -646,24 +669,77 @@ input[type="range"]::-webkit-slider-thumb:hover {
   color: var(--text-muted);
 }
 
-/* ── Slice Viewer ─────────────────────────────────────────────── */
-.slice-viewer {
-  padding: var(--space-md);
+/* ── Floating Slice Viewer ───────────────────────────── */
+.floating-slice-viewer {
+  position: absolute;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+  resize: both;
+  overflow: hidden;
+  min-width: 300px;
+  min-height: 200px;
+  max-width: 80vw;
+  max-height: 80vh;
+  cursor: move;
+}
+
+.floating-slice-viewer:active {
+  cursor: grabbing;
+}
+
+.slice-viewer-floating {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-sm);
+}
+
+.slice-viewer-header {
+  cursor: grab;
+  user-select: none;
+  margin-bottom: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  font-weight: 600;
+}
+
+.slice-viewer-header:active {
+  cursor: grabbing;
+}
+
+.slice-viewer-floating .slice-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  min-height: 0; /* Allow flex item to shrink */
 }
 
 .slice-canvas {
-  width: 100%;
-  aspect-ratio: 1;
+  flex: 1;
   background: black;
   border-radius: var(--radius-md);
   overflow: hidden;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
 }
 
 .slice-canvas img {
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
+  display: block;
 }
 
 .slice-controls {
@@ -671,6 +747,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   align-items: center;
   gap: var(--space-sm);
   margin-top: var(--space-sm);
+  padding: 0 var(--space-sm) var(--space-sm);
 }
 
 .slice-axis-buttons {
@@ -682,7 +759,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .slice-axis-btn {
-  padding: 4px 10px;
+  padding: 4px 8px;
   border: none;
   border-radius: 4px;
   font-size: 11px;
@@ -701,14 +778,51 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .slice-slider {
   flex: 1;
+  min-width: 100px;
 }
 
 .slice-number {
   font-size: 11px;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  min-width: 45px;
+  min-width: 35px;
   text-align: right;
+}
+
+/* ── Toggle Buttons ─────────────────────────────────────── */
+.toggle-buttons {
+  position: fixed;
+  top: 80px;
+  left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  z-index: 1000;
+}
+
+.toggle-btn {
+  width: 100px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.toggle-btn:hover {
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
 }
 
 /* ── Scan List ────────────────────────────────────────────────── */
@@ -821,9 +935,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .empty-state-icon {
-  font-size: 64px;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--accent-primary);
   margin-bottom: var(--space-md);
-  opacity: 0.3;
 }
 
 .empty-state-title {
@@ -909,12 +1024,47 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .badge-info { background: rgba(59,130,246,0.15); color: var(--info); }
 
 /* ── Responsive ───────────────────────────────────────────────── */
+@media (max-width: 1400px) {
+  .sidebar { width: 300px; min-width: 300px; }
+  .right-panel { width: 350px; min-width: 350px; }
+}
+
 @media (max-width: 1200px) {
   .sidebar { width: 280px; min-width: 280px; }
   .right-panel { width: 320px; min-width: 320px; }
+  .slice-viewer-container { height: 250px; }
 }
 
 @media (max-width: 900px) {
   .app-main { flex-direction: column; }
-  .sidebar, .right-panel { width: 100%; min-width: unset; height: 40%; border: none; }
+  .sidebar, .right-panel { width: 100%; min-width: unset; height: auto; border: none; }
+  .right-panel { flex: 1; }
+  .right-panel-controls { max-height: 50vh; }
+  .slice-viewer-container { height: 200px; }
+}
+
+@media (max-width: 600px) {
+  .header { padding: 0 var(--space-md); }
+  .header-title { font-size: 16px; }
+  .sidebar-section { padding: var(--space-sm); }
+  .viewer-toolbar { padding: var(--space-sm); flex-wrap: wrap; }
+  .slice-controls { flex-direction: column; gap: var(--space-md); }
+
+  .toggle-buttons {
+    top: 60px;
+    left: 10px;
+  }
+
+  .toggle-btn {
+    width: 80px;
+    height: 28px;
+    font-size: 10px;
+  }
+
+  .floating-slice-viewer {
+    bottom: 10px;
+    right: 10px;
+    min-width: 250px;
+    min-height: 150px;
+  }
 }

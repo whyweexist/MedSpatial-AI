@@ -24,6 +24,10 @@ class AnomalyService:
 
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info(f"Using device: {self.device}")
+        if self.device.type == "cpu":
+            logger.warning("GPU not available - analysis will be slow on CPU!")
+        
         self.volume_proc = VolumeProcessor()
         self.layer_dissector = LayerDissector(device=str(self.device))
 

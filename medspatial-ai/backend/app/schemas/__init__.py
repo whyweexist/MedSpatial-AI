@@ -144,3 +144,125 @@ class ProcessingUpdate(BaseModel):
     progress: float  # 0.0 - 1.0
     message: str
     error: Optional[str] = None
+
+
+# ──────────────────────────────────────────────────────────────
+#  Body Region Schemas
+# ──────────────────────────────────────────────────────────────
+
+class BodyRegionInfo(BaseModel):
+    region: str
+    confidence: float
+    method: str
+    modality: str
+    details: str = ""
+    display_name: str = ""
+    icon: str = "📦"
+
+
+# ──────────────────────────────────────────────────────────────
+#  Tissue Layer / Segment Schemas
+# ──────────────────────────────────────────────────────────────
+
+class TissueLayerInfo(BaseModel):
+    name: str
+    label_index: int
+    mesh_url: Optional[str] = None
+    vertex_count: int = 0
+    face_count: int = 0
+    volume_mm3: float = 0.0
+    volume_cm3: float = 0.0
+    color_rgb: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    opacity: float = 0.8
+    centroid: Optional[dict[str, float]] = None
+    mean_hu: float = 0.0
+    voxel_count: int = 0
+    description: str = ""
+
+
+class ReconstructionSummary(BaseModel):
+    scan_id: str
+    body_region: Optional[BodyRegionInfo] = None
+    tissues: list[TissueLayerInfo] = []
+    total_mesh_vertices: int = 0
+    total_mesh_faces: int = 0
+    processing_time_s: float = 0.0
+
+
+class SegmentInfo(BaseModel):
+    """Full segment data for the dissection module."""
+    name: str
+    label_index: int
+    mesh_url: Optional[str] = None
+    visible: bool = True
+    opacity: float = 0.8
+    color: str = "#808080"
+    color_rgb: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    volume_cm3: float = 0.0
+    mean_hu: float = 0.0
+    voxel_count: int = 0
+    centroid: Optional[dict[str, float]] = None
+    description: str = ""
+    dissection_order: int = 0
+
+
+class SegmentsResponse(BaseModel):
+    scan_id: str
+    segments: list[SegmentInfo] = []
+    body_region: Optional[BodyRegionInfo] = None
+
+
+# ──────────────────────────────────────────────────────────────
+#  Anatomy Label Schemas
+# ──────────────────────────────────────────────────────────────
+
+class AnatomyLabelSchema(BaseModel):
+    name: str
+    position: dict[str, float]  # {x, y, z} in viewer coords
+    volume_mm3: float = 0.0
+    color: tuple[float, float, float] = (0.5, 0.5, 0.5)
+    layer_index: int = 0
+    description: str = ""
+
+
+class AnatomyLabelsResponse(BaseModel):
+    scan_id: str
+    labels: list[AnatomyLabelSchema] = []
+
+
+# ──────────────────────────────────────────────────────────────
+#  XAI / Explainability Schemas
+# ──────────────────────────────────────────────────────────────
+
+class ReasoningStepSchema(BaseModel):
+    category: str
+    description: str
+    confidence: float
+    evidence_type: str
+
+
+class ReasoningChainSchema(BaseModel):
+    finding: str
+    confidence: float
+    steps: list[ReasoningStepSchema] = []
+    anatomical_context: str = ""
+    differential: list[str] = []
+    bbox_3d: Optional[dict[str, float]] = None
+    representative_slice_idx: Optional[int] = None
+
+
+class ExplainResponse(BaseModel):
+    scan_id: str
+    status: str
+    heatmaps: dict[str, str] = {}  # disease_class → URL
+    reasoning_chains: list[ReasoningChainSchema] = []
+    reasoning_url: Optional[str] = None
+
+
+# ──────────────────────────────────────────────────────────────
+#  Report Schemas
+# ──────────────────────────────────────────────────────────────
+
+class ReportRequest(BaseModel):
+    scan_id: str
+    format: str = Field("pdf", pattern="^(pdf|docx)$")

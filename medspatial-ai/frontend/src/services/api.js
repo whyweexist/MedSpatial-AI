@@ -1,13 +1,14 @@
 /**
- * MedSpatial AI — API Service
- * Centralized API client for all backend communication.
+ * MedSpatial AI — API Service (Enhanced)
+ * Centralized API client for all backend communication including
+ * segments, XAI, reports, labels, and body region endpoints.
  */
 
 import axios from 'axios';
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 120000, // 2 minutes for large uploads
+  timeout: 300000,  // Increased to 5 minutes for analysis/report generation
 });
 
 // ── Scans ────────────────────────────────────────────────────
@@ -72,6 +73,18 @@ export async function getSlice(scanId, axis = 'axial', index = 0) {
   return response.data;
 }
 
+// ── Segments / Dissection ────────────────────────────────────
+
+export async function getSegments(scanId) {
+  const response = await api.get(`/reconstruction/segments/${scanId}`);
+  return response.data;
+}
+
+export async function getAnatomyLabels(scanId) {
+  const response = await api.get(`/reconstruction/labels/${scanId}`);
+  return response.data;
+}
+
 // ── Analysis ─────────────────────────────────────────────────
 
 export async function runAnalysis(scanId, analysisType = 'full') {
@@ -85,6 +98,45 @@ export async function runAnalysis(scanId, analysisType = 'full') {
 export async function getAnalysisResults(scanId) {
   const response = await api.get(`/analysis/results/${scanId}`);
   return response.data;
+}
+
+// ── XAI / Explainability ─────────────────────────────────────
+
+export async function explainScan(scanId) {
+  const response = await api.post(`/analysis/explain/${scanId}`);
+  return response.data;
+}
+
+export async function getXAIHeatmap(scanId, diseaseClass) {
+  const response = await api.get(`/analysis/explain/${scanId}/heatmap/${diseaseClass}`, {
+    responseType: 'arraybuffer',
+  });
+  return response.data;
+}
+
+export async function getReasoning(scanId) {
+  const response = await api.get(`/analysis/explain/${scanId}/reasoning`);
+  return response.data;
+}
+
+// ── Reports ──────────────────────────────────────────────────
+
+export async function downloadReport(scanId, format = 'pdf') {
+  const response = await api.get(`/reports/generate/${scanId}`, {
+    params: { format },
+    responseType: 'blob',
+  });
+
+  // Trigger browser download
+  const blob = new Blob([response.data]);
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `MedSpatial_Report_${scanId.substring(0, 8)}.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  a.remove();
 }
 
 // ── Chat ─────────────────────────────────────────────────────

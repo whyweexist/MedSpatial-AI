@@ -1,7 +1,8 @@
 {
-  "name": "medspatial-ai-frontend",
+  "name": "c2three-frontend",
   "version": "1.0.0",
   "private": true,
+  "description": "C2Three — 3D medical imaging and AI analysis interface",
   "type": "module",
   "scripts": {
     "dev": "vite",

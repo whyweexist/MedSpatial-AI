@@ -21,6 +21,17 @@ async def lifespan(app: FastAPI):
     settings.ensure_directories()
     await init_db()
     logger.info("Database initialized")
+    
+    # Pre-load AI models to avoid first-request delay
+    try:
+        from app.services.anomaly_service import anomaly_svc
+        logger.info("Pre-loading AI models...")
+        # Force model loading by calling _load_models
+        anomaly_svc._load_models()
+        logger.info("AI models loaded successfully")
+    except Exception as e:
+        logger.warning(f"Model pre-loading failed: {e}")
+    
     yield
     await close_db()
     logger.info("Shutdown complete")
@@ -54,11 +65,15 @@ from app.api.upload import router as upload_router
 from app.api.reconstruction import router as recon_router
 from app.api.analysis import router as analysis_router
 from app.api.chat import router as chat_router
+from app.api.explain import router as explain_router
+from app.api.reports import router as reports_router
 
 app.include_router(upload_router)
 app.include_router(recon_router)
 app.include_router(analysis_router)
 app.include_router(chat_router)
+app.include_router(explain_router)
+app.include_router(reports_router)
 
 
 # ── WebSocket for real-time processing updates ───────────────

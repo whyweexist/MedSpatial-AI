@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     VOLUME_DIR: str = "./data/volumes"
     MESH_DIR: str = "./data/meshes"
     ANALYSIS_DIR: str = "./data/analysis"
+    REPORTS_DIR: str = "./data/reports"
+    XAI_DIR: str = "./data/analysis/xai"
+    ATLAS_DIR: str = "./data/atlas"
 
     # ── AI Model Paths ────────────────────────────────────────
     MODEL_DIR: str = "./models"
@@ -65,6 +68,9 @@ class Settings(BaseSettings):
             self.VOLUME_DIR,
             self.MESH_DIR,
             self.ANALYSIS_DIR,
+            self.REPORTS_DIR,
+            self.XAI_DIR,
+            self.ATLAS_DIR,
             self.MODEL_DIR,
         ]:
             Path(dir_path).mkdir(parents=True, exist_ok=True)

@@ -44,8 +44,8 @@ export default function SliceViewer({ scanId, volumeDimensions }) {
 
   if (!scanId || !volumeDimensions) {
     return (
-      <div style={{ marginTop: 16 }}>
-        <div className="sidebar-section-title">🖼️ Slice Viewer</div>
+      <div className="slice-viewer-floating">
+        <div className="slice-viewer-header sidebar-section-title">Slice Viewer</div>
         <div style={{ textAlign: 'center', padding: 16, color: 'var(--text-muted)', fontSize: 12 }}>
           Reconstruct a scan to view slices
         </div>
@@ -54,8 +54,8 @@ export default function SliceViewer({ scanId, volumeDimensions }) {
   }
 
   return (
-    <div style={{ marginTop: 16 }}>
-      <div className="sidebar-section-title">🖼️ Slice Viewer</div>
+    <div className="slice-viewer-floating">
+      <div className="slice-viewer-header sidebar-section-title">Slice Viewer</div>
 
       <div className="slice-viewer">
         {/* Slice image */}
@@ -64,7 +64,12 @@ export default function SliceViewer({ scanId, volumeDimensions }) {
             <img
               src={`data:image/png;base64,${sliceData}`}
               alt={`${axis} slice ${sliceIndex}`}
-              style={{ filter: 'contrast(1.1)' }}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                display: 'block'
+              }}
             />
           ) : (
             <div style={{

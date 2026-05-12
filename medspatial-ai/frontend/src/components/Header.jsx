@@ -1,5 +1,5 @@
 /**
- * MedSpatial AI — Header Component
+ * C2Three — Header Component
  * Top navigation bar with branding and system status.
  */
 
@@ -16,14 +16,16 @@ export default function Header({ scanStatus, activeScan }) {
   return (
     <header className="header">
       <div className="header-brand">
-        <div className="header-logo">M</div>
-        <h1 className="header-title">MedSpatial AI</h1>
-        <span className="header-subtitle">3D Medical Imaging Platform</span>
+        <div className="header-logo">C2</div>
+        <div className="header-text">
+          <h1 className="header-title">C2Three</h1>
+          <span className="header-subtitle">3D Medical Imaging Platform</span>
+        </div>
       </div>
       <div className="header-status">
         {activeScan && (
           <div className="status-indicator">
-            <span>📋</span>
+            <span className="status-label">Scan</span>
             <span>{activeScan.modality || 'SCAN'} — {activeScan.body_part || 'Unknown'}</span>
           </div>
         )}

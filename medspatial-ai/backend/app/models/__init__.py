@@ -49,6 +49,8 @@ class Scan(Base):
     series_description: Optional[str] = Column(String(512), nullable=True)
     modality: Optional[str] = Column(String(16), nullable=True)  # CT, XR, MR
     body_part: Optional[str] = Column(String(128), nullable=True)
+    body_region: Optional[str] = Column(String(64), nullable=True)  # head, chest, abdomen, etc.
+    region_confidence: Optional[float] = Column(Float, nullable=True)
 
     num_slices: int = Column(Integer, default=0)
     slice_thickness: Optional[float] = Column(Float, nullable=True)
@@ -89,7 +91,10 @@ class Volume(Base):
     dimensions: Optional[dict] = Column(JSON, nullable=True)  # {"x":N, "y":N, "z":N}
     voxel_spacing: Optional[dict] = Column(JSON, nullable=True)
 
-    # Layer meshes
+    # Layer meshes — stored as JSON: {tissue_name: {mesh_path, vertex_count, ...}}
+    layer_mesh_paths: Optional[dict] = Column(JSON, nullable=True)
+
+    # Legacy columns for backwards compat
     bone_mesh_path: Optional[str] = Column(String(1024), nullable=True)
     soft_tissue_mesh_path: Optional[str] = Column(String(1024), nullable=True)
     air_mesh_path: Optional[str] = Column(String(1024), nullable=True)
@@ -97,6 +102,9 @@ class Volume(Base):
 
     hu_min: Optional[float] = Column(Float, nullable=True)
     hu_max: Optional[float] = Column(Float, nullable=True)
+
+    # Reconstruction summary
+    reconstruction_summary: Optional[dict] = Column(JSON, nullable=True)
 
     created_at: datetime.datetime = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -120,6 +128,10 @@ class Analysis(Base):
     findings: Optional[dict] = Column(JSON, nullable=True)
     confidence: Optional[float] = Column(Float, nullable=True)
     summary: Optional[str] = Column(Text, nullable=True)
+
+    # XAI outputs
+    xai_heatmap_path: Optional[str] = Column(String(1024), nullable=True)
+    reasoning_json: Optional[dict] = Column(JSON, nullable=True)
 
     created_at: datetime.datetime = Column(DateTime, default=datetime.datetime.utcnow)
 

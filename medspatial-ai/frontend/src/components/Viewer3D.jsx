@@ -1,34 +1,89 @@
 /**
- * MedSpatial AI — 3D Viewer Component
+ * MedSpatial AI — 3D Viewer Component (Enhanced)
  * Interactive Three.js volumetric renderer using React Three Fiber.
- * Renders GLB meshes with orbit controls, clipping planes, and layer toggle.
+ * Supports complete dissection features: peeling, exploded views, multi-axis clipping,
+ * floating anatomy labels, and XAI heatmap overlays.
  */
 
 import React, { useRef, useState, useEffect, Suspense, useMemo } from 'react';
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber';
-import { OrbitControls, GizmoHelper, GizmoViewport, Grid, Environment, Html } from '@react-three/drei';
+import { OrbitControls, GizmoHelper, GizmoViewport, Grid, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import AnatomyLabels from '../three/AnatomyLabels';
 
-/* ── Layer Mesh Component ─────────────────────────────────────── */
+/* ── Layer Mesh Component with Dissection Support ───────────────── */
 
-function LayerMesh({ url, visible, opacity, color, clippingPlanes }) {
+function LayerMesh({
+  name,
+  url,
+  visible,
+  opacity,
+  color,
+  clippingPlanes,
+  dissectionOrder,
+  peelDepth,
+  isExploded,
+  isIsolated,
+  anyIsolated
+}) {
   const gltf = useLoader(GLTFLoader, url);
   const meshRef = useRef();
+
+  // Determine if this layer should be peeled away 
+  // Outside layers vanish first as peelDepth 0 -> 1
+  const orderThreshold = (dissectionOrder || 5) / 8; // normalize to 0-1
+  const isPeeled = orderThreshold > (1 - peelDepth);
+  
+  // Actually render if visible (from toggle) AND not peeled AND (either nothing isolated or THIS is isolated)
+  const shouldRender = visible && !isPeeled && (!anyIsolated || isIsolated);
+
+  // Calculate exploded offset
+  const explodedVector = useMemo(() => {
+    if (!isExploded || name === 'primary') return new THREE.Vector3(0, 0, 0);
+    // Displace outward based on name
+    const offsets = {
+      skin: [2, 0, 0],
+      bone: [-1, 0, 1],
+      left_lung: [-1, 0, -1],
+      right_lung: [1, 0, -1],
+      heart: [0, 0.5, 0.5],
+      vessels: [0, -0.5, 0.5],
+      soft_tissue: [1.5, 0, 0],
+      pathology: [0, 1, 0],
+      brain: [0, 1, 0],
+      liver: [0, -1, 0],
+      kidneys: [0, -1, 1],
+    };
+    const [x, y, z] = offsets[name] || [0, 0, 0];
+    return new THREE.Vector3(x, y, z).multiplyScalar(0.5); // Spread factor
+  }, [isExploded, name]);
+
+  const targetOpacity = isIsolated ? 0.9 : opacity;
 
   const material = useMemo(() => {
     return new THREE.MeshPhysicalMaterial({
       color: new THREE.Color(color),
       transparent: true,
-      opacity: opacity,
+      opacity: targetOpacity,
       roughness: 0.6,
       metalness: 0.05,
       side: THREE.DoubleSide,
-      depthWrite: opacity > 0.5,
+      depthWrite: targetOpacity > 0.5,
       clippingPlanes: clippingPlanes || [],
       clipShadows: true,
     });
-  }, [color, opacity, clippingPlanes]);
+  }, [color, targetOpacity, clippingPlanes]);
+
+  useFrame(() => {
+    if (meshRef.current) {
+      if (isExploded) {
+        meshRef.current.position.lerp(explodedVector, 0.1);
+      } else {
+        meshRef.current.position.lerp(new THREE.Vector3(0, 0, 0), 0.1);
+      }
+    }
+  });
 
   useEffect(() => {
     if (meshRef.current) {
@@ -40,9 +95,9 @@ function LayerMesh({ url, visible, opacity, color, clippingPlanes }) {
         }
       });
     }
-  }, [material]);
+  }, [material, gltf]);
 
-  if (!visible) return null;
+  if (!shouldRender) return null;
 
   return (
     <primitive
@@ -90,13 +145,13 @@ function ScanEffect() {
           gl_FragColor = vec4(color, alpha);
         }
       `,
-      side: THREE.DoubleSide,
+      side: THREE.BackSide,
     });
   }, []);
 
   return (
     <mesh ref={meshRef} material={scanMaterial}>
-      <boxGeometry args={[3, 3, 3]} />
+      <boxGeometry args={[4, 4, 4]} />
     </mesh>
   );
 }
@@ -115,6 +170,8 @@ function FindingMarker({ finding, index }) {
 
   if (!finding.location) return null;
 
+  // Assume location is in bounded 0-100 or already normalized
+  // Default mapping assuming normalization -50 to 50
   const position = [
     (finding.location.x / 100 - 0.5) * 2,
     (finding.location.z / 100 - 0.5) * 2,
@@ -145,7 +202,7 @@ function FindingMarker({ finding, index }) {
         <meshBasicMaterial color={severityColor} transparent opacity={0.4} side={THREE.DoubleSide} />
       </mesh>
       {hovered && (
-        <Html distanceFactor={5} position={[0, 0.15, 0]}>
+        <Html distanceFactor={5} position={[0, 0.15, 0]} zIndexRange={[100, 0]}>
           <div style={{
             background: 'rgba(17,24,39,0.95)',
             padding: '8px 12px',
@@ -155,6 +212,7 @@ function FindingMarker({ finding, index }) {
             color: '#f1f5f9',
             width: '200px',
             pointerEvents: 'none',
+            backdropFilter: 'blur(4px)',
           }}>
             <div style={{ fontWeight: 600, color: severityColor, marginBottom: 4 }}>
               {finding.severity?.toUpperCase()} ({(finding.confidence * 100).toFixed(0)}%)
@@ -193,7 +251,7 @@ function LoadingFallback() {
         gap: '12px',
       }}>
         <div className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }}></div>
-        <div style={{ color: '#94a3b8', fontSize: 13 }}>Loading 3D Model...</div>
+        <div style={{ color: '#94a3b8', fontSize: 13, background: 'rgba(15,23,42,0.8)', padding: '4px 12px', borderRadius: 16 }}>Loading 3D Meshes...</div>
       </div>
     </Html>
   );
@@ -201,12 +259,32 @@ function LoadingFallback() {
 
 /* ── Main Viewer Component ────────────────────────────────────── */
 
-export default function Viewer3D({ meshUrl, layerUrls, layers, showHeatmap, findings }) {
-  const [clipY, setClipY] = useState(5);
+export default function Viewer3D({ 
+  meshUrl, 
+  layerUrls, 
+  layers, 
+  showHeatmap, 
+  findings,
+  segments,
+  peelDepth = 0,
+  isExploded = false,
+  isolatedSegment = null,
+  clipAxis = null,
+  anatomyLabels = [],
+  showLabels = true,
+}) {
+  const [clipVal, setClipVal] = useState(5);
+  
   const clippingPlanes = useMemo(() => {
-    if (clipY >= 4.9) return [];
-    return [new THREE.Plane(new THREE.Vector3(0, -1, 0), clipY)];
-  }, [clipY]);
+    if (!clipAxis || clipVal >= 4.9) return [];
+    
+    // Create plane based on selected axis
+    if (clipAxis === 'x') return [new THREE.Plane(new THREE.Vector3(-1, 0, 0), clipVal)];
+    if (clipAxis === 'y') return [new THREE.Plane(new THREE.Vector3(0, -1, 0), clipVal)];
+    if (clipAxis === 'z') return [new THREE.Plane(new THREE.Vector3(0, 0, -1), clipVal)];
+    
+    return [new THREE.Plane(new THREE.Vector3(0, -1, 0), clipVal)];
+  }, [clipAxis, clipVal]);
 
   return (
     <div className="viewer-canvas" id="viewer-3d">
@@ -214,7 +292,7 @@ export default function Viewer3D({ meshUrl, layerUrls, layers, showHeatmap, find
         camera={{ position: [2.5, 2, 2.5], fov: 50, near: 0.01, far: 100 }}
         shadows
         gl={{ antialias: true, alpha: false }}
-        style={{ background: '#0a0e1a' }}
+        style={{ background: 'linear-gradient(to bottom, #0a0e1a, #0f172a)' }}
       >
         <SceneSetup />
 
@@ -222,7 +300,7 @@ export default function Viewer3D({ meshUrl, layerUrls, layers, showHeatmap, find
         <ambientLight intensity={0.4} />
         <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow shadow-mapSize={1024} />
         <directionalLight position={[-3, 4, -3]} intensity={0.5} color="#818cf8" />
-        <pointLight position={[0, 3, 0]} intensity={0.3} color="#06b6d4" />
+        <pointLight position={[0, -3, 0]} intensity={0.2} color="#06b6d4" />
 
         {/* Grid */}
         <Grid
@@ -244,9 +322,10 @@ export default function Viewer3D({ meshUrl, layerUrls, layers, showHeatmap, find
 
         {/* Meshes */}
         <Suspense fallback={<LoadingFallback />}>
-          {/* Primary mesh */}
-          {meshUrl && layers.primary?.visible && (
+          {/* Primary mesh (if layers not heavily used or for fallback) */}
+          {meshUrl && layers.primary?.visible && !isExploded && peelDepth === 0 && (
             <LayerMesh
+              name="primary"
               url={meshUrl}
               visible={true}
               opacity={layers.primary.opacity}
@@ -258,18 +337,30 @@ export default function Viewer3D({ meshUrl, layerUrls, layers, showHeatmap, find
           {/* Layer meshes */}
           {Object.entries(layerUrls).map(([name, url]) => {
             const layerConfig = layers[name];
+            // Find segment config for ordering
+            const segmentInfo = (segments || []).find(s => s.name === name);
+            
             if (!layerConfig || !url) return null;
             return (
               <LayerMesh
                 key={name}
+                name={name}
                 url={url}
                 visible={layerConfig.visible}
                 opacity={layerConfig.opacity}
                 color={layerConfig.color}
                 clippingPlanes={clippingPlanes}
+                dissectionOrder={segmentInfo?.dissection_order || 5}
+                peelDepth={peelDepth}
+                isExploded={isExploded}
+                isIsolated={name === isolatedSegment}
+                anyIsolated={isolatedSegment !== null}
               />
             );
           })}
+
+          {/* Anatomy Labels */}
+          {showLabels && <AnatomyLabels labels={anatomyLabels} visible={!isExploded} />}
 
           {/* Finding markers */}
           {showHeatmap && findings && findings.map((finding, i) => (
@@ -296,33 +387,43 @@ export default function Viewer3D({ meshUrl, layerUrls, layers, showHeatmap, find
         </GizmoHelper>
       </Canvas>
 
-      {/* Clipping plane slider */}
-      <div style={{
-        position: 'absolute',
-        right: 16,
-        top: '50%',
-        transform: 'translateY(-50%)',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 8,
-      }}>
-        <span style={{ fontSize: 10, color: '#64748b', writingMode: 'vertical-rl' }}>CLIP</span>
-        <input
-          type="range"
-          min={-2}
-          max={5}
-          step={0.05}
-          value={clipY}
-          onChange={(e) => setClipY(parseFloat(e.target.value))}
-          style={{
-            writingMode: 'vertical-lr',
-            direction: 'rtl',
-            height: 150,
-            width: 4,
-          }}
-        />
-      </div>
+      {/* Cross Section Slider */}
+      {clipAxis && (
+        <div style={{
+          position: 'absolute',
+          right: 16,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 8,
+          background: 'rgba(15,23,42,0.8)',
+          padding: '16px 8px',
+          borderRadius: 20,
+          backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(255,255,255,0.1)',
+        }}>
+          <span style={{ fontSize: 10, color: '#94a3b8', writingMode: 'vertical-rl', fontWeight: 700, letterSpacing: 1 }}>
+            {clipAxis.toUpperCase()} CROSS-SECTION
+          </span>
+          <input
+            type="range"
+            min={-2}
+            max={5}
+            step={0.05}
+            value={clipVal}
+            onChange={(e) => setClipVal(parseFloat(e.target.value))}
+            className="dissection-slider"
+            style={{
+              writingMode: 'vertical-lr',
+              direction: 'rtl',
+              height: 150,
+              width: 6,
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

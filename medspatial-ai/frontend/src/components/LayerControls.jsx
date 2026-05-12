@@ -6,11 +6,18 @@
 import React from 'react';
 
 const LAYER_INFO = {
-  primary: { icon: '🫁', label: 'Complete Model', description: 'Full reconstructed volume' },
-  bone: { icon: '🦴', label: 'Bone', description: 'HU 200–3000' },
-  soft_tissue: { icon: '🫀', label: 'Soft Tissue', description: 'HU -100–200' },
-  air: { icon: '💨', label: 'Air / Lung', description: 'HU < -500' },
-  vessel: { icon: '🩸', label: 'Vessels', description: 'HU 200–600' },
+  primary: { icon: '📦', label: 'Complete Model', description: 'Full reconstructed volume' },
+  skin: { icon: '🧍', label: 'Skin', description: 'Skin & outline' },
+  bone: { icon: '🦴', label: 'Bones', description: 'Skeletal structures' },
+  left_lung: { icon: '🫁', label: 'Left Lung', description: 'Left lung parenchyma' },
+  right_lung: { icon: '🫁', label: 'Right Lung', description: 'Right lung parenchyma' },
+  heart: { icon: '❤️', label: 'Heart', description: 'Cardiac silhouette' },
+  vessels: { icon: '🩸', label: 'Vessels', description: 'Vasculature' },
+  soft_tissue: { icon: '🫀', label: 'Soft Tissue', description: 'Muscles & organs' },
+  pathology: { icon: '⚠️', label: 'Pathology', description: 'Anomalies' },
+  brain: { icon: '🧠', label: 'Brain', description: 'Brain parenchyma' },
+  liver: { icon: '🫘', label: 'Liver', description: 'Hepatic tissue' },
+  kidneys: { icon: '🫘', label: 'Kidneys', description: 'Renal tissue' },
 };
 
 export default function LayerControls({ layers, layerUrls, onToggle, onOpacityChange }) {

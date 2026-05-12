@@ -44,6 +44,10 @@ export default function UploadPanel({ onUploadComplete }) {
     accept: {
       'application/dicom': ['.dcm', '.dicom'],
       'application/octet-stream': ['.dcm'],
+      'image/jpeg': ['.jpg', '.jpeg'],
+      'image/png': ['.png'],
+      'image/tiff': ['.tif', '.tiff'],
+      'image/bmp': ['.bmp'],
     },
     multiple: true,
     disabled: uploading,
@@ -52,7 +56,7 @@ export default function UploadPanel({ onUploadComplete }) {
   return (
     <div className="sidebar-section">
       <div className="sidebar-section-title">
-        📤 Upload DICOM
+        📤 Upload Scan
       </div>
 
       <div
@@ -81,10 +85,10 @@ export default function UploadPanel({ onUploadComplete }) {
           <>
             <div className="upload-zone-icon">📁</div>
             <div className="upload-zone-text">
-              {isDragActive ? 'Drop DICOM files here' : 'Drag & drop DICOM files'}
+              {isDragActive ? 'Drop files here' : 'Drag & drop DICOM or Image files'}
             </div>
             <div className="upload-zone-hint">
-              or click to select · .dcm files
+              or click to select · .dcm, .png, .jpg, .tiff
             </div>
           </>
         )}

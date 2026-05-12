@@ -1,264 +1,390 @@
 """
-MedSpatial AI — Reconstruction Service
-Converts DICOM volumes into 3D meshes using marching cubes and surface extraction.
+MedSpatial AI — Reconstruction Service (Enhanced)
+Orchestrates 3D volume reconstruction from DICOM series.
+Produces tissue-specific meshes via SurfaceProcessor, integrates DepthLifter
+for single X-ray → pseudo-3D, body region detection, and anatomy labeling.
 """
 
-import base64
-import io
+import gc
+import time
+import uuid
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from loguru import logger
-from PIL import Image
 from scipy import ndimage
 from skimage import measure
 
+from app.ai.body_part_labeler import BodyPartLabeler
+from app.ai.body_region_classifier import BodyRegionClassifier
 from app.config import settings
 from app.core.mesh_generator import MeshGenerator
+from app.core.region_config import get_region_config
+from app.core.surface_processor import (
+    CHEST_TISSUE_CONFIGS,
+    SurfaceProcessor,
+    TissueConfig,
+    TissueResult,
+)
 from app.core.volume_processor import VolumeProcessor
-from app.schemas import SliceResponse
-from app.services.dicom_service import DicomService
+
+
+# Dissection order mapping (outside-in, higher = outermost)
+_DISSECTION_ORDER = {
+    "skin": 8,
+    "soft_tissue": 7,
+    "bone": 6,
+    "left_lung": 4,
+    "right_lung": 4,
+    "vessels": 3,
+    "heart": 2,
+    "pathology": 1,
+    "brain": 3,
+    "liver": 3,
+    "kidneys": 3,
+}
 
 
 class ReconstructionService:
-    """Orchestrates 3D volume reconstruction from DICOM series."""
+    """
+    Orchestrates the full reconstruction pipeline:
+    DICOM → Volume → Body Region Detection → Tissue-Specific Meshes → Labels.
+    """
 
     def __init__(self):
-        self.dicom_svc = DicomService()
         self.volume_proc = VolumeProcessor()
         self.mesh_gen = MeshGenerator()
+        self.surface_proc = SurfaceProcessor(
+            step_size=settings.MARCHING_CUBES_STEP_SIZE
+        )
+        self.region_classifier = BodyRegionClassifier()
+        self.labeler = BodyPartLabeler()
 
-    def build_volume(self, upload_dir: str) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Load DICOM files from upload directory and construct a 3D HU volume.
-
-        Returns:
-            volume: 3D numpy array (z, y, x) in Hounsfield units
-            voxel_spacing: array [z, y, x] spacing in mm
-        """
-        volume, voxel_spacing = self.dicom_svc.load_dicom_series(upload_dir)
-
-        # Enforce 3D volume format (in case a 4D stack is produced unintentionally)
-        if volume.ndim == 4 and volume.shape[0] == 1:
-            volume = volume[0]
-
-        if volume.ndim != 3:
-            raise ValueError(f"Expected a 3D volume, got shape {volume.shape}")
-
-        # Keep memory lower precision where feasible.
-        volume = volume.astype(np.float32, copy=False)
-
-        # Clip to plausible HU range before smoothing and meshing.
-        volume = self.volume_proc.clip_hu(volume)
-        volume = self.volume_proc.denoise(volume)
-
-        logger.info(f"Volume built: {volume.shape}, range [{volume.min():.0f}, {volume.max():.0f}] HU")
-        return volume, voxel_spacing
-
-    def save_volume(self, volume: np.ndarray, path: str) -> None:
-        """Save volume as compressed numpy file."""
-        np.save(path, volume)
-        logger.info(f"Volume saved to {path}")
-
-    def generate_mesh(
+    async def build_reconstruction(
         self,
+        scan_id: str,
         volume: np.ndarray,
-        output_path: str,
-        iso_level: float = 300.0,
-        step_size: int = 2,
-        voxel_spacing: np.ndarray = None,
-    ) -> str:
+        voxel_spacing: np.ndarray,
+        metadata: dict,
+        iso_level: Optional[float] = None,
+        step_size: Optional[int] = None,
+        generate_layers: bool = True,
+    ) -> dict:
         """
-        Generate a 3D mesh from the volume using marching cubes.
+        Full reconstruction pipeline.
 
         Args:
-            volume: 3D HU volume
-            output_path: path to save .glb mesh
-            iso_level: Hounsfield unit threshold for surface extraction
-            step_size: marching cubes step size (higher = faster, lower resolution)
-            voxel_spacing: [z,y,x] spacing for correct aspect ratio
+            scan_id: unique scan identifier
+            volume: 3D numpy array in Hounsfield Units
+            voxel_spacing: [z, y, x] voxel spacing in mm
+            metadata: DICOM metadata dict
+            iso_level: override iso-surface level
+            step_size: override marching cubes step size
+            generate_layers: whether to generate tissue-specific meshes
+
+        Returns:
+            dict with mesh paths, tissue results, body region, labels, summary
         """
-        # Validate volume shape + type to avoid OOM from accidental extra dims.
-        if volume.ndim != 3:
-            raise ValueError(f"Expected 3D volume for mesh generation, got {volume.shape}")
+        t_start = time.time()
+        output_dir = str(Path(settings.MESH_DIR))
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        vol = volume.astype(np.float32, copy=False)
+        # 1. Detect body region
+        region_result = self.region_classifier.classify(metadata, volume)
+        region_config = get_region_config(region_result.region)
+        logger.info(f"Body region: {region_result.region.value} ({region_result.confidence:.0%})")
 
-        # Downsample for performance if volume is large
-        if max(vol.shape) > 256:
-            zoom_factors = [256 / s for s in vol.shape]
-            vol = ndimage.zoom(vol, zoom_factors, order=1)
-            if voxel_spacing is not None:
-                voxel_spacing = voxel_spacing / np.array(zoom_factors)
+        # 2. Apply preprocessing
+        volume = self.volume_proc.clip_hu(volume)
 
-        # Apply gaussian smoothing for better surface
-        vol = ndimage.gaussian_filter(vol, sigma=1.0)
+        # 3. Isotropic resampling if spacing is very anisotropic
+        volume, voxel_spacing = self._resample_isotropic(volume, voxel_spacing)
 
-        # Run marching cubes
-        try:
-            verts, faces, normals, values = measure.marching_cubes(
-                vol,
-                level=iso_level,
-                step_size=step_size,
-                allow_degenerate=False,
+        # 4. Generate primary mesh (full body surface at bone-level iso)
+        primary_iso = iso_level or region_config.default_iso_level
+        primary_mesh_path = self._generate_primary_mesh(
+            volume, scan_id, output_dir, voxel_spacing, primary_iso, step_size
+        )
+
+        # 5. Generate tissue-specific layer meshes
+        tissue_results: list[TissueResult] = []
+        layer_mesh_paths: dict[str, dict] = {}
+
+        if generate_layers:
+            try:
+                tissue_results = self.surface_proc.process_all_tissues(
+                    volume=volume,
+                    scan_id=scan_id,
+                    output_dir=output_dir,
+                    voxel_spacing=voxel_spacing,
+                )
+            except RuntimeError as exc:
+                # OOM fallback: reduce resolution by 50% and retry
+                logger.warning(f"Surface processing failed ({exc}), retrying at half resolution")
+                gc.collect()
+                zoom = [0.5, 0.5, 0.5]
+                small_vol = ndimage.zoom(volume, zoom, order=1)
+                small_spacing = voxel_spacing / np.array(zoom)
+                tissue_results = self.surface_proc.process_all_tissues(
+                    volume=small_vol,
+                    scan_id=scan_id,
+                    output_dir=output_dir,
+                    voxel_spacing=small_spacing,
+                )
+
+            for tissue in tissue_results:
+                if tissue.mesh_path:
+                    layer_mesh_paths[tissue.name] = {
+                        "mesh_path": tissue.mesh_path,
+                        "name": tissue.name,
+                        "label_index": tissue.label_index,
+                        "vertex_count": tissue.vertex_count,
+                        "face_count": tissue.face_count,
+                        "volume_mm3": tissue.volume_mm3,
+                        "color_rgb": list(tissue.color_rgb),
+                        "opacity": tissue.opacity,
+                        "centroid_mm": list(tissue.centroid_mm) if tissue.centroid_mm else None,
+                        "mean_hu": tissue.mean_hu,
+                        "voxel_count": tissue.voxel_count,
+                        "dissection_order": _DISSECTION_ORDER.get(tissue.name, 5),
+                    }
+
+        # 6. Generate anatomy labels
+        labels = []
+        if tissue_results:
+            labels = self.labeler.generate_labels(
+                tissue_results=tissue_results,
+                voxel_spacing=voxel_spacing,
+                volume_shape=volume.shape,
             )
-        except ValueError:
-            # If iso_level produces no surface, try with auto threshold
-            threshold = np.percentile(vol, 75)
-            logger.warning(f"Iso level {iso_level} failed, retrying with auto threshold {threshold:.0f}")
-            verts, faces, normals, values = measure.marching_cubes(
-                vol,
-                level=threshold,
-                step_size=step_size,
-                allow_degenerate=False,
-            )
 
-        # Apply voxel spacing to vertices
-        if voxel_spacing is not None:
-            verts = verts * voxel_spacing
+        # 7. Save volume to disk
+        volume_path = str(Path(settings.VOLUME_DIR) / f"{scan_id}.npy")
+        np.save(volume_path, volume)
 
-        # Center the mesh
-        center = (verts.max(axis=0) + verts.min(axis=0)) / 2
-        verts -= center
+        elapsed = time.time() - t_start
+        logger.info(f"Reconstruction complete in {elapsed:.1f}s")
 
-        # Normalize to reasonable scale
-        max_extent = np.abs(verts).max()
-        if max_extent > 0:
-            verts = verts / max_extent * 100.0
+        # 8. Build layer URLs
+        layer_urls = {}
+        for tissue_name, info in layer_mesh_paths.items():
+            layer_urls[tissue_name] = f"/api/reconstruction/mesh/{scan_id}/{tissue_name}"
 
-        # Generate and save mesh
-        self.mesh_gen.save_glb(verts, faces, normals, output_path)
-        logger.info(f"Mesh saved: {output_path} ({len(verts)} verts, {len(faces)} faces)")
-        return output_path
+        # 9. Build summary
+        total_verts = sum(t.vertex_count for t in tissue_results)
+        total_faces = sum(t.face_count for t in tissue_results)
 
-    def generate_layer_meshes(
+        summary = {
+            "scan_id": scan_id,
+            "body_region": {
+                "region": region_result.region.value,
+                "confidence": region_result.confidence,
+                "method": region_result.method,
+                "modality": region_result.modality,
+                "display_name": region_config.display_name,
+                "icon": region_config.icon,
+            },
+            "tissues": [
+                {
+                    "name": t.name,
+                    "label_index": t.label_index,
+                    "vertex_count": t.vertex_count,
+                    "face_count": t.face_count,
+                    "volume_mm3": t.volume_mm3,
+                    "volume_cm3": t.volume_mm3 / 1000.0,
+                    "color_rgb": list(t.color_rgb),
+                    "opacity": t.opacity,
+                    "centroid_mm": list(t.centroid_mm) if t.centroid_mm else None,
+                    "mean_hu": t.mean_hu,
+                    "voxel_count": t.voxel_count,
+                    "description": "",
+                    "dissection_order": _DISSECTION_ORDER.get(t.name, 5),
+                    "has_mesh": t.mesh_path is not None,
+                }
+                for t in tissue_results
+            ],
+            "labels": [
+                {
+                    "name": l.name,
+                    "position": {"x": l.position[0], "y": l.position[1], "z": l.position[2]},
+                    "volume_mm3": l.volume_mm3,
+                    "color": list(l.color),
+                    "layer_index": l.layer_index,
+                    "description": l.description,
+                }
+                for l in labels
+            ],
+            "total_mesh_vertices": total_verts,
+            "total_mesh_faces": total_faces,
+            "processing_time_s": elapsed,
+        }
+
+        return {
+            "scan_id": scan_id,
+            "volume_path": volume_path,
+            "primary_mesh_path": primary_mesh_path,
+            "layer_mesh_paths": layer_mesh_paths,
+            "layer_urls": layer_urls,
+            "volume_dimensions": {
+                "x": volume.shape[2],
+                "y": volume.shape[1],
+                "z": volume.shape[0],
+            },
+            "voxel_spacing": {
+                "x": float(voxel_spacing[2]),
+                "y": float(voxel_spacing[1]),
+                "z": float(voxel_spacing[0]),
+            },
+            "body_region": summary["body_region"],
+            "summary": summary,
+            "labels": summary["labels"],
+            "hu_range": {"min": float(volume.min()), "max": float(volume.max())},
+        }
+
+    def _generate_primary_mesh(
         self,
         volume: np.ndarray,
         scan_id: str,
-        mesh_dir: str,
-        voxel_spacing: np.ndarray = None,
-    ) -> dict[str, str]:
-        """
-        Generate separate meshes for different tissue layers using HU thresholds.
+        output_dir: str,
+        voxel_spacing: np.ndarray,
+        iso_level: float,
+        step_size: Optional[int],
+    ) -> Optional[str]:
+        """Generate the primary combined-tissue mesh."""
+        try:
+            smoothed = ndimage.gaussian_filter(volume.astype(np.float64), sigma=1.0)
+            step = step_size or settings.MARCHING_CUBES_STEP_SIZE
 
-        Standard HU ranges:
-            Air:         -1000 to -500
-            Lung/Fat:     -500 to -100
-            Soft tissue:  -100 to  300
-            Bone:          300 to 3000+
-            Vessel:        200 to  600 (contrast-enhanced)
-        """
-        layer_configs = {
-            "air": {"hu_min": -1000.0, "hu_max": -500.0, "iso_offset": 0.5},
-            "soft_tissue": {"hu_min": -100.0, "hu_max": 300.0, "iso_offset": 0.5},
-            "bone": {"hu_min": 300.0, "hu_max": 3000.0, "iso_offset": 0.5},
-            "vessel": {"hu_min": 200.0, "hu_max": 600.0, "iso_offset": 0.5},
-        }
+            verts, faces, normals, _ = measure.marching_cubes(
+                smoothed, level=iso_level, step_size=step, allow_degenerate=False,
+            )
 
-        layer_paths = {}
-        mesh_dir_path = Path(mesh_dir)
+            # Apply spacing and center
+            verts = verts * voxel_spacing
+            center = np.array(volume.shape) * voxel_spacing / 2.0
+            max_extent = float(np.max(np.array(volume.shape) * voxel_spacing))
+            verts -= center
+            if max_extent > 0:
+                verts = verts / max_extent * 100.0
 
-        if volume.ndim != 3:
-            raise ValueError(f"Expected 3D volume for layer generation, got {volume.shape}")
+            mesh_path = str(Path(output_dir) / f"{scan_id}_primary.glb")
+            self.mesh_gen.save_glb(verts, faces, normals, mesh_path)
+            logger.info(f"Primary mesh: {len(verts)} verts, {len(faces)} faces")
+            return mesh_path
 
-        volume = volume.astype(np.float32, copy=False)
+        except Exception as exc:
+            logger.error(f"Primary mesh generation failed: {exc}")
+            return None
 
-        for layer_name, config in layer_configs.items():
-            try:
-                # Create binary mask for this tissue type
-                mask = (volume >= config["hu_min"]) & (volume < config["hu_max"])
+    def _resample_isotropic(
+        self, volume: np.ndarray, spacing: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Resample to near-isotropic spacing if very anisotropic."""
+        if spacing.min() <= 0:
+            return volume, spacing
 
-                # Skip if too few voxels
-                voxel_count = mask.sum()
-                if voxel_count < 100:
-                    logger.warning(f"Layer '{layer_name}': only {voxel_count} voxels, skipping")
-                    continue
+        anisotropy = spacing.max() / spacing.min()
+        if anisotropy <= 3.0:
+            return volume, spacing
 
-                # Create layer volume preserving HU values
-                layer_vol = np.where(mask, volume, config["hu_min"] - 1)
-
-                # Smooth the layer
-                layer_vol = ndimage.gaussian_filter(layer_vol.astype(np.float64), sigma=1.5)
-
-                # Downsample
-                if max(layer_vol.shape) > 192:
-                    zoom_factors = [192 / s for s in layer_vol.shape]
-                    layer_vol = ndimage.zoom(layer_vol, zoom_factors, order=1)
-                    local_spacing = voxel_spacing / np.array(zoom_factors) if voxel_spacing is not None else None
-                else:
-                    local_spacing = voxel_spacing
-
-                # Extract surface
-                iso_level = config["hu_min"] + (config["hu_max"] - config["hu_min"]) * config["iso_offset"]
-                try:
-                    verts, faces, normals, _ = measure.marching_cubes(
-                        layer_vol,
-                        level=iso_level,
-                        step_size=settings.MARCHING_CUBES_STEP_SIZE,
-                        allow_degenerate=False,
-                    )
-                except ValueError:
-                    logger.warning(f"Marching cubes failed for layer '{layer_name}', skipping")
-                    continue
-
-                if local_spacing is not None:
-                    verts = verts * local_spacing
-
-                center = (verts.max(axis=0) + verts.min(axis=0)) / 2
-                verts -= center
-                max_extent = np.abs(verts).max()
-                if max_extent > 0:
-                    verts = verts / max_extent * 100.0
-
-                layer_path = str(mesh_dir_path / f"{scan_id}_{layer_name}.glb")
-                self.mesh_gen.save_glb(verts, faces, normals, layer_path)
-                layer_paths[layer_name] = layer_path
-                logger.info(f"Layer mesh '{layer_name}': {len(verts)} verts")
-
-            except Exception as exc:
-                logger.error(f"Failed to generate layer '{layer_name}': {exc}")
-                continue
-
-        return layer_paths
-
-    def extract_slice(self, volume_path: str, axis: str, index: int) -> SliceResponse:
-        """
-        Extract a 2D slice from the volume and return as base64-encoded PNG.
-        """
-        volume = np.load(volume_path)
-
-        axis_map = {"axial": 0, "coronal": 1, "sagittal": 2}
-        axis_idx = axis_map.get(axis, 0)
-        total_slices = volume.shape[axis_idx]
-
-        index = max(0, min(index, total_slices - 1))
-
-        if axis_idx == 0:
-            slice_2d = volume[index, :, :]
-        elif axis_idx == 1:
-            slice_2d = volume[:, index, :]
-        else:
-            slice_2d = volume[:, :, index]
-
-        # Apply windowing for display
-        window_center = 40.0
-        window_width = 400.0
-        img = self.volume_proc.apply_window(slice_2d, window_center, window_width)
-
-        # Convert to 8-bit image
-        img_normalized = ((img - img.min()) / (img.max() - img.min() + 1e-8) * 255).astype(np.uint8)
-        pil_image = Image.fromarray(img_normalized, mode="L")
-
-        # Encode as PNG base64
-        buf = io.BytesIO()
-        pil_image.save(buf, format="PNG")
-        img_base64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-
-        return SliceResponse(
-            image_data=img_base64,
-            axis=axis,
-            index=index,
-            total_slices=total_slices,
-            window_center=window_center,
-            window_width=window_width,
+        target_spacing = np.array([spacing.min()] * 3)
+        zoom_factors = spacing / target_spacing
+        resampled = ndimage.zoom(volume, zoom_factors, order=1)
+        logger.info(
+            f"Isotropic resampling: {volume.shape} → {resampled.shape} "
+            f"(spacing {spacing} → {target_spacing})"
         )
+        return resampled, target_spacing
+
+    def generate_layer_meshes(
+        self, volume: np.ndarray, scan_id: str, output_dir: str,
+        voxel_spacing: np.ndarray, step_size: int = 2,
+    ) -> dict[str, Optional[str]]:
+        """
+        Legacy method: Generate tissue-specific layer meshes using HU thresholds.
+        Kept for backward compatibility. New code should use build_reconstruction.
+        """
+        results = self.surface_proc.process_all_tissues(
+            volume=volume,
+            scan_id=scan_id,
+            output_dir=output_dir,
+            voxel_spacing=voxel_spacing,
+        )
+        return {r.name: r.mesh_path for r in results}
+
+    def extract_slice(
+        self, volume: np.ndarray, axis: str, index: int
+    ) -> np.ndarray:
+        """Extract a 2D slice from the volume."""
+        if axis == "axial":
+            idx = min(index, volume.shape[0] - 1)
+            return volume[idx, :, :]
+        elif axis == "coronal":
+            idx = min(index, volume.shape[1] - 1)
+            return volume[:, idx, :]
+        elif axis == "sagittal":
+            idx = min(index, volume.shape[2] - 1)
+            return volume[:, :, idx]
+        else:
+            raise ValueError(f"Unknown axis: {axis}")
+
+    async def reconstruct_from_xray(
+        self,
+        scan_id: str,
+        image_array: np.ndarray,
+        metadata: dict,
+    ) -> dict:
+        """
+        Reconstruct pseudo-3D model from a single 2D X-ray using DepthLifter.
+        """
+        try:
+            from app.ai.depth_lifter import DepthLifterCNN
+            import torch
+
+            lifter = DepthLifterCNN()
+            lifter.eval()
+
+            # Normalize image to [0,1]
+            img = image_array.astype(np.float32)
+            if img.max() > 1.0:
+                img = (img - img.min()) / (img.max() - img.min() + 1e-8)
+
+            # Convert to tensor (B, 1, H, W)
+            tensor = torch.from_numpy(img).float().unsqueeze(0).unsqueeze(0)
+
+            with torch.no_grad():
+                depth_volume = lifter(tensor)  # (B, D, H, W)
+
+            pseudo_volume = depth_volume.squeeze(0).numpy()  # (D, H, W)
+
+            # Convert to pseudo-HU range
+            pseudo_volume = pseudo_volume * 2000 - 1000  # map to [-1000, 1000]
+
+            voxel_spacing = np.array([1.0, 1.0, 1.0])
+
+            return await self.build_reconstruction(
+                scan_id=scan_id,
+                volume=pseudo_volume,
+                voxel_spacing=voxel_spacing,
+                metadata=metadata,
+                generate_layers=True,
+            )
+
+        except Exception as exc:
+            logger.error(f"X-ray reconstruction failed: {exc}")
+            # Fallback: create a simple 3D volume from 2D
+            D = 64
+            pseudo = np.stack([image_array] * D, axis=0).astype(np.float32)
+            if pseudo.max() > 1.0:
+                pseudo = (pseudo - pseudo.min()) / (pseudo.max() - pseudo.min() + 1e-8)
+            pseudo = pseudo * 2000 - 1000
+
+            voxel_spacing = np.array([1.0, 1.0, 1.0])
+            return await self.build_reconstruction(
+                scan_id=scan_id,
+                volume=pseudo,
+                voxel_spacing=voxel_spacing,
+                metadata=metadata,
+                generate_layers=True,
+            )
