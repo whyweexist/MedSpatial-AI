@@ -18,6 +18,9 @@ from app.models import Scan, ScanStatus
 from app.models.database import get_db
 from app.schemas import ScanListResponse, ScanMetadata, ScanUploadResponse
 from app.services.dicom_service import DicomService
+from app.awm.schema import AnatomicalWorldModel, ProvenanceRecord
+from app.awm.store import get_awm_store
+from app.ingestion.study_manifest import create_study_manifest
 
 router = APIRouter(prefix="/api/scans", tags=["Scans"])
 dicom_svc = DicomService()
@@ -76,6 +79,20 @@ async def upload_dicom_files(
     )
     db.add(scan)
     await db.flush()
+
+    manifest = create_study_manifest(scan_id, saved_paths, meta)
+    awm = AnatomicalWorldModel(
+        study=manifest,
+        provenance=[
+            ProvenanceRecord(
+                operation="study_upload",
+                source_ids=[str(path) for path in saved_paths],
+                output_ids=[scan_id],
+                parameters={"file_count": len(saved_paths)},
+            )
+        ],
+    )
+    await get_awm_store().save(awm)
 
     logger.info(f"Created scan {scan_id} with {len(saved_paths)} slices")
 

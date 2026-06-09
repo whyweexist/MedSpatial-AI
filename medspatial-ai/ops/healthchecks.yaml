@@ -1,0 +1,9 @@
+checks:
+  - name: backend
+    url: http://backend:8000/api/health
+    interval_seconds: 30
+    timeout_seconds: 5
+  - name: model-registry
+    url: http://backend:8000/api/models/registry
+    interval_seconds: 300
+    timeout_seconds: 5

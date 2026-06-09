@@ -35,6 +35,8 @@ class ReasoningChain:
     differential: list[str]
     bbox_3d: Optional[dict[str, float]] = None
     representative_slice_idx: Optional[int] = None
+    evidence_references: list[dict[str, Any]] = field(default_factory=list)
+    limitations: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -44,6 +46,8 @@ class XAIResult:
     anomaly_attribution: Optional[np.ndarray]  # voxel-level attribution
     reasoning_chains: list[ReasoningChain]
     segmentation_relevance: Optional[dict[str, np.ndarray]] = None  # class → relevance map
+    methodology: str = "evidence_attribution"
+    limitations: list[str] = field(default_factory=list)
 
 
 class ExplainabilityEngine:
@@ -77,8 +81,8 @@ class ExplainabilityEngine:
         D, H, W = volume_tensor.shape[2], volume_tensor.shape[3], volume_tensor.shape[4]
 
         if model is None:
-            logger.warning("No model for Grad-CAM, generating synthetic heatmap")
-            return self._synthetic_grad_cam(D, H, W)
+            logger.warning("No model for Grad-CAM; attribution is unavailable")
+            return np.zeros((D, H, W), dtype=np.float32)
 
         try:
             activations: list[torch.Tensor] = []
@@ -107,7 +111,7 @@ class ExplainabilityEngine:
                         break
 
             if target_layer is None:
-                return self._synthetic_grad_cam(D, H, W)
+                return np.zeros((D, H, W), dtype=np.float32)
 
             handle_fwd = target_layer.register_forward_hook(forward_hook)
             handle_bwd = target_layer.register_full_backward_hook(backward_hook)
@@ -128,7 +132,7 @@ class ExplainabilityEngine:
                 if logits is None:
                     handle_fwd.remove()
                     handle_bwd.remove()
-                    return self._synthetic_grad_cam(D, H, W)
+                    return np.zeros((D, H, W), dtype=np.float32)
 
                 target_logit = logits[0, target_class]
                 model.zero_grad()
@@ -138,7 +142,7 @@ class ExplainabilityEngine:
             handle_bwd.remove()
 
             if not activations or not gradients:
-                return self._synthetic_grad_cam(D, H, W)
+                return np.zeros((D, H, W), dtype=np.float32)
 
             act = activations[0]
             grad = gradients[0]
@@ -191,7 +195,7 @@ class ExplainabilityEngine:
 
         except Exception as exc:
             logger.error(f"Grad-CAM failed: {exc}")
-            return self._synthetic_grad_cam(D, H, W)
+            return np.zeros((D, H, W), dtype=np.float32)
         finally:
             gc.collect()
 
@@ -217,8 +221,8 @@ class ExplainabilityEngine:
         D, H, W = volume_shape
 
         if patch_embeddings is None or memory_bank is None:
-            logger.warning("No embeddings for attribution, generating synthetic map")
-            return self._synthetic_attribution(D, H, W)
+            logger.warning("No embeddings for attribution; attribution is unavailable")
+            return np.zeros((D, H, W), dtype=np.float32)
 
         try:
             # Compute cosine similarity between each patch and nearest bank entry
@@ -259,7 +263,7 @@ class ExplainabilityEngine:
 
         except Exception as exc:
             logger.error(f"Anomaly attribution failed: {exc}")
-            return self._synthetic_attribution(D, H, W)
+            return np.zeros((D, H, W), dtype=np.float32)
 
     def generate_reasoning_chain(
         self,
@@ -268,6 +272,8 @@ class ExplainabilityEngine:
         anomaly_map: Optional[np.ndarray],
         volume: Optional[np.ndarray],
         tissue_results: Optional[list] = None,
+        modality: str = "CT",
+        body_region: str = "unknown",
     ) -> list[ReasoningChain]:
         """
         Generate structured reasoning chains for all findings.
@@ -288,6 +294,8 @@ class ExplainabilityEngine:
 
         for finding in findings:
             steps: list[ReasoningStep] = []
+            evidence_references: list[dict[str, Any]] = []
+            limitations: list[str] = []
             location = finding.get("location", {})
             confidence = finding.get("confidence", 0.0)
             severity = finding.get("severity", "unknown")
@@ -310,8 +318,14 @@ class ExplainabilityEngine:
                     evidence_type="heatmap",
                     data={"score": local_score, "threshold": 0.65},
                 ))
+                evidence_references.append({
+                    "type": "heatmap",
+                    "slice_index": z,
+                    "location": {"x": x, "y": y, "z": z},
+                    "score": local_score,
+                })
 
-            # Step 2: HU density analysis
+            # Step 2: modality-aware local signal analysis
             if volume is not None and location:
                 z = min(int(location.get("z", 0)), volume.shape[0] - 1)
                 y = min(int(location.get("y", 0)), volume.shape[1] - 1)
@@ -324,19 +338,31 @@ class ExplainabilityEngine:
                 x_s, x_e = max(0, x - r), min(volume.shape[2], x + r)
                 neighborhood = volume[z_s:z_e, y_s:y_e, x_s:x_e]
 
-                mean_hu = float(neighborhood.mean())
-                std_hu = float(neighborhood.std())
+                mean_value = float(neighborhood.mean())
+                std_value = float(neighborhood.std())
+                is_ct = modality.upper() == "CT"
+                unit = "HU" if is_ct else "relative intensity"
+                interpretation = (
+                    self._interpret_hu(mean_value)
+                    if is_ct
+                    else "No CT density interpretation was applied because MRI signal is sequence-dependent."
+                )
 
                 steps.append(ReasoningStep(
-                    category="density_analysis",
+                    category="intensity_analysis",
                     description=(
-                        f"Local density: mean={mean_hu:.0f} HU, std={std_hu:.0f} HU. "
-                        f"{self._interpret_hu(mean_hu)}"
+                        f"Local signal mean={mean_value:.1f} {unit}, "
+                        f"spread={std_value:.1f}. {interpretation}"
                     ),
                     confidence=confidence,
                     evidence_type="statistical",
-                    data={"mean_hu": mean_hu, "std_hu": std_hu},
+                    data={"mean": mean_value, "standard_deviation": std_value, "unit": unit},
                 ))
+                evidence_references.append({
+                    "type": "source_slice",
+                    "slice_index": z,
+                    "location": {"x": x, "y": y, "z": z},
+                })
 
             # Step 3: Disease classification evidence
             if disease_probs is not None:
@@ -356,14 +382,19 @@ class ExplainabilityEngine:
             # Step 4: Anatomical context
             steps.append(ReasoningStep(
                 category="anatomical_context",
-                description=f"Finding located in the {region}",
+                description=f"Candidate signal is located in the {region} of the {body_region} study.",
                 confidence=confidence,
                 evidence_type="statistical",
                 data={"region": region, "severity": severity},
             ))
 
             # Build differential diagnosis
-            differential = self._build_differential(finding, disease_probs)
+            differential = self._build_differential(finding, disease_probs, body_region)
+            limitations.append(
+                "This explanation summarizes model evidence and possible considerations; it does not establish a diagnosis."
+            )
+            if disease_probs is None:
+                limitations.append("No calibrated disease classifier probabilities were available.")
 
             # Representative slice
             rep_slice = int(location.get("z", 0)) if location else None
@@ -388,6 +419,8 @@ class ExplainabilityEngine:
                 differential=differential,
                 bbox_3d=bbox,
                 representative_slice_idx=rep_slice,
+                evidence_references=evidence_references,
+                limitations=limitations,
             ))
 
         logger.info(f"Generated {len(chains)} reasoning chains")
@@ -402,6 +435,8 @@ class ExplainabilityEngine:
         anomaly_map: Optional[np.ndarray],
         volume: Optional[np.ndarray],
         tissue_results: Optional[list] = None,
+        modality: str = "CT",
+        body_region: str = "unknown",
     ) -> XAIResult:
         """
         Compute all XAI outputs in one call.
@@ -422,18 +457,31 @@ class ExplainabilityEngine:
                     grad_cam_maps[label] = heatmap
                     gc.collect()
 
-        if not grad_cam_maps and volume is not None:
-            # Generate a synthetic global attention map
-            grad_cam_maps["global_attention"] = self._synthetic_grad_cam(
-                volume.shape[0], volume.shape[1], volume.shape[2]
+        limitations: list[str] = []
+        if not grad_cam_maps and anomaly_map is not None:
+            attribution_map = anomaly_map.astype(np.float32, copy=False)
+            maximum = float(attribution_map.max())
+            if maximum > 1e-8:
+                attribution_map = attribution_map / maximum
+            grad_cam_maps["analysis_attribution"] = attribution_map
+            limitations.append(
+                "A trained classifier was unavailable; this is anomaly attribution rather than Grad-CAM."
             )
+        elif not grad_cam_maps:
+            limitations.append("No model-derived spatial attribution map was available.")
 
         # Anomaly attribution
         attribution = anomaly_map  # reuse existing anomaly map as attribution
 
         # Reasoning chains
         chains = self.generate_reasoning_chain(
-            findings, disease_probs, anomaly_map, volume, tissue_results
+            findings,
+            disease_probs,
+            anomaly_map,
+            volume,
+            tissue_results,
+            modality=modality,
+            body_region=body_region,
         )
 
         return XAIResult(
@@ -441,37 +489,17 @@ class ExplainabilityEngine:
             anomaly_attribution=attribution,
             reasoning_chains=chains,
             segmentation_relevance=None,
+            methodology="model_grad_cam" if model is not None else "evidence_attribution",
+            limitations=limitations,
         )
 
     def _synthetic_grad_cam(self, d: int, h: int, w: int) -> np.ndarray:
-        """Generate a plausible synthetic Grad-CAM heatmap for fallback."""
-        z, y, x = np.ogrid[:d, :h, :w]
-        cd, ch, cw = d // 2, h // 2, w // 2
-        # Gaussian centered on volume center with some randomness
-        offset_d = np.random.randint(-d // 6, d // 6 + 1)
-        offset_h = np.random.randint(-h // 6, h // 6 + 1)
-        offset_w = np.random.randint(-w // 6, w // 6 + 1)
-        sigma = min(d, h, w) * 0.3
-        heatmap = np.exp(-(
-            (z - cd - offset_d) ** 2 +
-            (y - ch - offset_h) ** 2 +
-            (x - cw - offset_w) ** 2
-        ) / (2 * sigma ** 2)).astype(np.float32)
-        return heatmap
+        """Return an explicit unavailable map; never fabricate attribution."""
+        return np.zeros((d, h, w), dtype=np.float32)
 
     def _synthetic_attribution(self, d: int, h: int, w: int) -> np.ndarray:
-        """Generate synthetic anomaly attribution for fallback."""
-        attr = np.random.random((d, h, w)).astype(np.float32) * 0.3
-        # Add a few hot spots
-        for _ in range(3):
-            cz = np.random.randint(d // 4, 3 * d // 4)
-            cy = np.random.randint(h // 4, 3 * h // 4)
-            cx = np.random.randint(w // 4, 3 * w // 4)
-            z, y, x = np.ogrid[:d, :h, :w]
-            spot = np.exp(-((z - cz) ** 2 + (y - cy) ** 2 + (x - cx) ** 2) / (2 * 8 ** 2))
-            attr += spot.astype(np.float32) * 0.7
-        attr = np.clip(attr, 0, 1)
-        return attr
+        """Return an explicit unavailable map; never fabricate attribution."""
+        return np.zeros((d, h, w), dtype=np.float32)
 
     def _interpret_hu(self, hu_value: float) -> str:
         """Interpret a HU value in clinical terms."""
@@ -489,24 +517,34 @@ class ExplainabilityEngine:
             return "Very dense material (cortical bone or metallic artifact)"
 
     def _build_differential(
-        self, finding: dict, disease_probs: Optional[np.ndarray]
+        self,
+        finding: dict,
+        disease_probs: Optional[np.ndarray],
+        body_region: str = "unknown",
     ) -> list[str]:
         """Build a differential diagnosis list."""
         from app.ai.anomaly_graph import DISEASE_LABELS
 
         differential: list[str] = []
-        mean_hu = 0.0
+        if body_region == "spine":
+            differential.extend([
+                "Degenerative change",
+                "Compression deformity",
+                "Alignment variation",
+                "Marrow signal variation",
+            ])
 
-        # From description interpretation
+        # Description-based chest considerations are only valid for chest studies.
         description = finding.get("description", "").lower()
-        if "air" in description or "pneumo" in description:
-            differential.extend(["Pneumothorax", "Emphysema", "Bulla"])
-        elif "fluid" in description or "effusion" in description:
-            differential.extend(["Pleural effusion", "Hemothorax", "Empyema"])
-        elif "mass" in description or "nodule" in description:
-            differential.extend(["Pulmonary nodule", "Lung carcinoma", "Metastasis", "Granuloma"])
-        elif "consolidation" in description:
-            differential.extend(["Pneumonia", "Pulmonary hemorrhage", "Atelectasis"])
+        if body_region == "chest":
+            if "air" in description or "pneumo" in description:
+                differential.extend(["Pneumothorax", "Emphysema", "Bulla"])
+            elif "fluid" in description or "effusion" in description:
+                differential.extend(["Pleural effusion", "Hemothorax", "Empyema"])
+            elif "mass" in description or "nodule" in description:
+                differential.extend(["Pulmonary nodule", "Lung carcinoma", "Metastasis", "Granuloma"])
+            elif "consolidation" in description:
+                differential.extend(["Pneumonia", "Pulmonary hemorrhage", "Atelectasis"])
 
         # From classification probabilities
         if disease_probs is not None:

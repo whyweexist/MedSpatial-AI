@@ -22,10 +22,10 @@ from app.config import settings
 from app.core.mesh_generator import MeshGenerator
 from app.core.region_config import get_region_config
 from app.core.surface_processor import (
-    CHEST_TISSUE_CONFIGS,
     SurfaceProcessor,
     TissueConfig,
     TissueResult,
+    get_tissue_configs,
 )
 from app.core.volume_processor import VolumeProcessor
 
@@ -43,6 +43,9 @@ _DISSECTION_ORDER = {
     "brain": 3,
     "liver": 3,
     "kidneys": 3,
+    "bone_marrow": 5,
+    "spinal_canal": 4,
+    "paraspinal_soft_tissue": 7,
 }
 
 
@@ -110,6 +113,7 @@ class ReconstructionService:
         # 5. Generate tissue-specific layer meshes
         tissue_results: list[TissueResult] = []
         layer_mesh_paths: dict[str, dict] = {}
+        tissue_configs = get_tissue_configs(region_result.region.value)
 
         if generate_layers:
             try:
@@ -118,6 +122,7 @@ class ReconstructionService:
                     scan_id=scan_id,
                     output_dir=output_dir,
                     voxel_spacing=voxel_spacing,
+                    tissue_configs=tissue_configs,
                 )
             except RuntimeError as exc:
                 # OOM fallback: reduce resolution by 50% and retry
@@ -131,6 +136,7 @@ class ReconstructionService:
                     scan_id=scan_id,
                     output_dir=output_dir,
                     voxel_spacing=small_spacing,
+                    tissue_configs=tissue_configs,
                 )
 
             for tissue in tissue_results:
@@ -157,6 +163,7 @@ class ReconstructionService:
                 tissue_results=tissue_results,
                 voxel_spacing=voxel_spacing,
                 volume_shape=volume.shape,
+                body_region=region_result.region.value,
             )
 
         # 7. Save volume to disk
@@ -198,7 +205,10 @@ class ReconstructionService:
                     "centroid_mm": list(t.centroid_mm) if t.centroid_mm else None,
                     "mean_hu": t.mean_hu,
                     "voxel_count": t.voxel_count,
-                    "description": "",
+                    "description": next(
+                        (config.description for config in tissue_configs if config.name == t.name),
+                        "",
+                    ),
                     "dissection_order": _DISSECTION_ORDER.get(t.name, 5),
                     "has_mesh": t.mesh_path is not None,
                 }

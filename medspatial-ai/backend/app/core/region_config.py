@@ -159,6 +159,42 @@ ABDOMEN_CONFIG = RegionConfiguration(
     default_iso_level=200.0,
 )
 
+SPINE_CONFIG = RegionConfiguration(
+    region=BodyRegion.SPINE,
+    display_name="Spine",
+    icon="Spine",
+    layer_names=[
+        "skin", "bone", "bone_marrow", "spinal_canal",
+        "paraspinal_soft_tissue", "pathology",
+    ],
+    layer_colors=[
+        (0.90, 0.75, 0.65),
+        (0.95, 0.92, 0.80),
+        (0.75, 0.35, 0.30),
+        (0.35, 0.65, 0.90),
+        (0.72, 0.52, 0.45),
+        (1.00, 0.15, 0.00),
+    ],
+    layer_descriptions=[
+        "Skin and subcutaneous tissue",
+        "Vertebral osseous structures",
+        "Trabecular bone and marrow-density regions",
+        "Estimated spinal canal region",
+        "Paraspinal musculature and soft tissue",
+        "Candidate region requiring review",
+    ],
+    disease_screening=[
+        "Compression deformity", "Fracture candidate", "Alignment abnormality",
+        "Lytic or sclerotic focus", "Canal narrowing candidate",
+    ],
+    window_presets=[
+        WindowPreset("Bone", 400, 1800),
+        WindowPreset("Soft Tissue", 50, 350),
+        WindowPreset("Spinal Canal", 40, 300),
+    ],
+    default_iso_level=250.0,
+)
+
 # Default config for any region not explicitly defined
 DEFAULT_CONFIG = RegionConfiguration(
     region=BodyRegion.UNKNOWN,
@@ -192,7 +228,7 @@ _REGION_CONFIGS: dict[BodyRegion, RegionConfiguration] = {
     BodyRegion.ABDOMEN: ABDOMEN_CONFIG,
     BodyRegion.NECK: HEAD_CONFIG,  # neck uses head config
     BodyRegion.PELVIS: ABDOMEN_CONFIG,  # pelvis uses abdomen config
-    BodyRegion.SPINE: DEFAULT_CONFIG,
+    BodyRegion.SPINE: SPINE_CONFIG,
     BodyRegion.EXTREMITY: DEFAULT_CONFIG,
     BodyRegion.WHOLE_BODY: CHEST_CONFIG,
     BodyRegion.UNKNOWN: DEFAULT_CONFIG,

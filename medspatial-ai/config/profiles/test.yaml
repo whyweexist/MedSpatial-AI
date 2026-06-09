@@ -1,0 +1,12 @@
+name: test
+device: cpu
+volume_size: 32
+maximum_volume_size: 32
+patch_size: 8
+lazy_model_loading: true
+quantization: none
+onnx_runtime: false
+openvino_optional: false
+tensor_cache_mb: 32
+mesh_lod_levels: [0.5]
+remote_providers: false

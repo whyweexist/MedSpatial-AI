@@ -7,15 +7,17 @@ import React, { useState, useCallback } from 'react';
 import { explainScan, getReasoning } from '../services/api';
 
 const CATEGORY_ICONS = {
-  anomaly_evidence: '🔥',
-  density_analysis: '📊',
-  classification_evidence: '🏷️',
-  anatomical_context: '📍',
+  anomaly_evidence: 'MAP',
+  density_analysis: 'HU',
+  intensity_analysis: 'SIG',
+  classification_evidence: 'AI',
+  anatomical_context: 'LOC',
 };
 
 const CATEGORY_COLORS = {
   anomaly_evidence: '#ef4444',
   density_analysis: '#06b6d4',
+  intensity_analysis: '#06b6d4',
   classification_evidence: '#f59e0b',
   anatomical_context: '#10b981',
 };
@@ -47,14 +49,14 @@ export default function ExplainPanel({ scanId, findings }) {
   return (
     <div className="explain-panel">
       <div className="explain-header">
-        <span>🧠 AI Explainability</span>
+        <span>Evidence Explanation</span>
         <button
           className="btn btn-sm btn-primary"
           onClick={handleExplain}
           disabled={loading}
           style={{ fontSize: 10, padding: '3px 8px' }}
         >
-          {loading ? '⏳ Computing...' : '🔍 Explain Findings'}
+          {loading ? 'Building evidence...' : 'Explain findings'}
         </button>
       </div>
 
@@ -88,7 +90,7 @@ export default function ExplainPanel({ scanId, findings }) {
                   {chain.steps && chain.steps.map((step, sIdx) => (
                     <div key={sIdx} className="explain-step">
                       <span className="explain-step-icon">
-                        {CATEGORY_ICONS[step.category] || '📋'}
+                        {CATEGORY_ICONS[step.category] || 'INFO'}
                       </span>
                       <div className="explain-step-content">
                         <div
@@ -105,12 +107,15 @@ export default function ExplainPanel({ scanId, findings }) {
                   {/* Differential */}
                   {chain.differential && chain.differential.length > 0 && (
                     <div className="explain-differential">
-                      <div className="explain-diff-title">Differential Diagnosis:</div>
+                      <div className="explain-diff-title">Possible considerations, not a diagnosis:</div>
                       {chain.differential.map((dx, dIdx) => (
                         <span key={dIdx} className="explain-diff-tag">{dx}</span>
                       ))}
                     </div>
                   )}
+                  {chain.limitations?.map((limitation, limitIndex) => (
+                    <div className="explain-limitation" key={limitIndex}>{limitation}</div>
+                  ))}
                 </div>
               )}
             </div>
@@ -202,6 +207,15 @@ export default function ExplainPanel({ scanId, findings }) {
           border-radius: 10px;
           font-size: 9px;
           color: #818cf8;
+        }
+        .explain-limitation {
+          margin-top: 6px;
+          padding: 6px;
+          border-left: 2px solid #f59e0b;
+          background: rgba(245,158,11,0.08);
+          color: var(--text-secondary, #64748b);
+          font-size: 9px;
+          line-height: 1.4;
         }
       `}</style>
     </div>

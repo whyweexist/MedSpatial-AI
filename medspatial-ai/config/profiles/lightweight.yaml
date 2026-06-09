@@ -1,0 +1,12 @@
+name: lightweight
+device: auto
+volume_size: 64
+maximum_volume_size: 96
+patch_size: 16
+lazy_model_loading: true
+quantization: int8
+onnx_runtime: true
+openvino_optional: true
+tensor_cache_mb: 256
+mesh_lod_levels: [0.25, 0.5, 1.0]
+remote_providers: false

@@ -108,6 +108,11 @@ class AnalysisResponse(BaseModel):
     segmentation_url: Optional[str] = None
     summary: Optional[str] = None
     confidence: Optional[float] = None
+    progress: float = Field(default=0.0, ge=0.0, le=100.0)
+    stage: str = "queued"
+    eta_seconds: Optional[int] = Field(default=None, ge=0)
+    elapsed_seconds: Optional[float] = Field(default=None, ge=0.0)
+    methodology: Optional[str] = None
 
 
 # ──────────────────────────────────────────────────────────────

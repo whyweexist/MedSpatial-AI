@@ -18,6 +18,9 @@ const LAYER_INFO = {
   brain: { icon: '🧠', label: 'Brain', description: 'Brain parenchyma' },
   liver: { icon: '🫘', label: 'Liver', description: 'Hepatic tissue' },
   kidneys: { icon: '🫘', label: 'Kidneys', description: 'Renal tissue' },
+  bone_marrow: { icon: 'BM', label: 'Vertebral Marrow', description: 'Marrow-density region' },
+  spinal_canal: { icon: 'SC', label: 'Spinal Canal', description: 'Estimated canal region' },
+  paraspinal_soft_tissue: { icon: 'PS', label: 'Paraspinal Soft Tissue', description: 'Posterior soft tissue' },
 };
 
 export default function LayerControls({ layers, layerUrls, onToggle, onOpacityChange }) {
@@ -27,7 +30,7 @@ export default function LayerControls({ layers, layerUrls, onToggle, onOpacityCh
         🔬 Layer Dissection
       </div>
 
-      {Object.entries(layers).map(([name, config]) => {
+      {Object.entries(layers).filter(([name]) => name === 'primary' || !!layerUrls[name]).map(([name, config]) => {
         const info = LAYER_INFO[name] || { icon: '📦', label: name, description: '' };
         const hasUrl = name === 'primary' || !!layerUrls[name];
 

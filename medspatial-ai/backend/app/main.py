@@ -22,15 +22,13 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
     
-    # Pre-load AI models to avoid first-request delay
-    try:
-        from app.services.anomaly_service import anomaly_svc
-        logger.info("Pre-loading AI models...")
-        # Force model loading by calling _load_models
-        anomaly_svc._load_models()
-        logger.info("AI models loaded successfully")
-    except Exception as e:
-        logger.warning(f"Model pre-loading failed: {e}")
+    if not settings.LAZY_MODEL_LOADING:
+        try:
+            from app.services.anomaly_service import anomaly_svc
+            logger.info("Pre-loading configured AI models")
+            anomaly_svc._load_models()
+        except Exception as exc:
+            logger.warning(f"Model pre-loading failed: {exc}")
     
     yield
     await close_db()
@@ -67,6 +65,7 @@ from app.api.analysis import router as analysis_router
 from app.api.chat import router as chat_router
 from app.api.explain import router as explain_router
 from app.api.reports import router as reports_router
+from app.api.awm import router as awm_router
 
 app.include_router(upload_router)
 app.include_router(recon_router)
@@ -74,6 +73,7 @@ app.include_router(analysis_router)
 app.include_router(chat_router)
 app.include_router(explain_router)
 app.include_router(reports_router)
+app.include_router(awm_router)
 
 
 # ── WebSocket for real-time processing updates ───────────────
@@ -125,10 +125,14 @@ async def websocket_endpoint(websocket: WebSocket, scan_id: str):
 # ── Health Check ──────────────────────────────────────────────
 @app.get("/api/health")
 async def health_check():
+    from app.core.hardware_manager import get_hardware_manager
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
+        "architecture": "AWM-JGEM",
+        "profile": settings.PROFILE,
+        "hardware": get_hardware_manager().get_status_dict(),
     }
 
 

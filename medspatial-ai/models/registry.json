@@ -1,0 +1,29 @@
+{
+  "architecture": "AWM-JGEM",
+  "models": [
+    {
+      "name": "jepa-light",
+      "version": "1.0.0",
+      "profile": "lightweight",
+      "provider": "local",
+      "calibrated": false,
+      "status": "architecture-baseline"
+    },
+    {
+      "name": "anatomical-gnn",
+      "version": "1.0.0",
+      "profile": "lightweight",
+      "provider": "local",
+      "calibrated": false,
+      "status": "architecture-baseline"
+    },
+    {
+      "name": "energy-scorer",
+      "version": "1.0.0",
+      "profile": "all",
+      "provider": "local",
+      "calibrated": false,
+      "status": "requires-dataset-calibration"
+    }
+  ]
+}

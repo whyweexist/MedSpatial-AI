@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     VOLUME_DIR: str = "./data/volumes"
     MESH_DIR: str = "./data/meshes"
     ANALYSIS_DIR: str = "./data/analysis"
+    AWM_DIR: str = "./data/awm"
+    AUDIT_DIR: str = "./data/audit"
     REPORTS_DIR: str = "./data/reports"
     XAI_DIR: str = "./data/analysis/xai"
     ATLAS_DIR: str = "./data/atlas"
@@ -48,6 +50,11 @@ class Settings(BaseSettings):
     NUM_HEADS: int = 8
     NUM_LAYERS: int = 6
     ANOMALY_THRESHOLD: float = 0.65
+    PROFILE: str = "lightweight"
+    DEVICE_PREFERENCE: str = "auto"
+    LAZY_MODEL_LOADING: bool = True
+    ENABLE_REMOTE_PROVIDERS: bool = False
+    MAX_TENSOR_CACHE_MB: int = 256
 
     # ── Reconstruction ────────────────────────────────────────
     MARCHING_CUBES_STEP_SIZE: int = 2
@@ -68,6 +75,8 @@ class Settings(BaseSettings):
             self.VOLUME_DIR,
             self.MESH_DIR,
             self.ANALYSIS_DIR,
+            self.AWM_DIR,
+            self.AUDIT_DIR,
             self.REPORTS_DIR,
             self.XAI_DIR,
             self.ATLAS_DIR,

@@ -149,6 +149,53 @@ CHEST_TISSUE_CONFIGS: list[TissueConfig] = [
     ),
 ]
 
+SPINE_TISSUE_CONFIGS: list[TissueConfig] = [
+    TissueConfig(
+        name="skin", label_index=1, hu_min=-200.0, hu_max=100.0,
+        iso_level=-50.0, color_rgb=(0.90, 0.75, 0.65), opacity=0.25,
+        smoothing_sigma=1.5, min_component_size=200,
+        description="Skin and subcutaneous tissue",
+    ),
+    TissueConfig(
+        name="bone", label_index=3, hu_min=200.0, hu_max=3071.0,
+        iso_level=300.0, color_rgb=(0.95, 0.92, 0.80), opacity=0.95,
+        smoothing_sigma=0.7, min_component_size=30,
+        description="Vertebral osseous structures",
+    ),
+    TissueConfig(
+        name="bone_marrow", label_index=4, hu_min=-50.0, hu_max=300.0,
+        iso_level=80.0, color_rgb=(0.75, 0.35, 0.30), opacity=0.55,
+        smoothing_sigma=1.0, min_component_size=60,
+        description="Trabecular bone and marrow-density regions",
+    ),
+    TissueConfig(
+        name="spinal_canal", label_index=5, hu_min=-20.0, hu_max=100.0,
+        iso_level=35.0, color_rgb=(0.35, 0.65, 0.90), opacity=0.45,
+        smoothing_sigma=1.0, min_component_size=40,
+        description="Estimated spinal canal density region",
+    ),
+    TissueConfig(
+        name="paraspinal_soft_tissue", label_index=2, hu_min=-100.0, hu_max=200.0,
+        iso_level=40.0, color_rgb=(0.72, 0.52, 0.45), opacity=0.35,
+        smoothing_sigma=1.4, min_component_size=100,
+        description="Paraspinal musculature and soft tissue",
+    ),
+]
+
+GENERAL_TISSUE_CONFIGS: list[TissueConfig] = [
+    config for config in CHEST_TISSUE_CONFIGS
+    if config.name in {"skin", "bone", "soft_tissue", "vessels"}
+]
+
+
+def get_tissue_configs(body_region: str) -> list[TissueConfig]:
+    """Return conservative tissue definitions for the detected body region."""
+    if body_region == "spine":
+        return SPINE_TISSUE_CONFIGS
+    if body_region == "chest":
+        return CHEST_TISSUE_CONFIGS
+    return GENERAL_TISSUE_CONFIGS
+
 
 class SurfaceProcessor:
     """
@@ -279,6 +326,22 @@ class SurfaceProcessor:
             tissue_mask = (
                 (work_volume >= tissue_cfg.hu_min) & (work_volume < tissue_cfg.hu_max)
             ).astype(np.float32)
+
+        if tissue_cfg.name in {"bone_marrow", "spinal_canal", "paraspinal_soft_tissue"}:
+            z_size, y_size, x_size = work_volume.shape
+            _, y_grid, x_grid = np.ogrid[:z_size, :y_size, :x_size]
+            central_x = (x_grid >= x_size * 0.28) & (x_grid <= x_size * 0.72)
+            posterior_y = (y_grid >= y_size * 0.42) & (y_grid <= y_size * 0.92)
+            if tissue_cfg.name == "bone_marrow":
+                vertebral_bone = work_volume >= 180.0
+                near_bone = ndimage.binary_dilation(vertebral_bone, iterations=2)
+                tissue_mask = tissue_mask * near_bone * central_x * posterior_y
+            elif tissue_cfg.name == "spinal_canal":
+                canal_x = (x_grid >= x_size * 0.40) & (x_grid <= x_size * 0.60)
+                canal_y = (y_grid >= y_size * 0.48) & (y_grid <= y_size * 0.75)
+                tissue_mask = tissue_mask * canal_x * canal_y
+            else:
+                tissue_mask = tissue_mask * central_x * posterior_y
 
         # For skin: create outer shell only (subtract interior)
         if tissue_cfg.name == "skin":

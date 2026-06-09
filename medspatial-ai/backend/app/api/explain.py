@@ -48,7 +48,7 @@ async def compute_explanations(scan_id: str, db: AsyncSession = Depends(get_db))
         # Load volume
         vol_data = None
         try:
-            vol_data = np.load(volume.volume_path)
+            vol_data = np.load(volume.volume_path, mmap_mode="r")
         except Exception:
             pass
 
@@ -78,6 +78,8 @@ async def compute_explanations(scan_id: str, db: AsyncSession = Depends(get_db))
             disease_probs=disease_probs,
             anomaly_map=anomaly_map,
             volume=vol_data,
+            modality=scan.modality or "UNKNOWN",
+            body_region=scan.body_region or scan.body_part or "unknown",
         )
 
         # Save heatmaps
@@ -101,6 +103,8 @@ async def compute_explanations(scan_id: str, db: AsyncSession = Depends(get_db))
                 "differential": chain.differential,
                 "bbox_3d": chain.bbox_3d,
                 "representative_slice_idx": chain.representative_slice_idx,
+                "evidence_references": chain.evidence_references,
+                "limitations": chain.limitations,
                 "steps": [
                     {
                         "category": s.category,
@@ -123,6 +127,8 @@ async def compute_explanations(scan_id: str, db: AsyncSession = Depends(get_db))
             "heatmaps": saved_heatmaps,
             "reasoning_url": f"/api/analysis/explain/{scan_id}/reasoning",
             "num_reasoning_chains": len(reasoning_data),
+            "methodology": xai_result.methodology,
+            "limitations": xai_result.limitations,
         })
 
     except Exception as exc:

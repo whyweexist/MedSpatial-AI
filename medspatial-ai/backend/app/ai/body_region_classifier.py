@@ -41,7 +41,7 @@ _BODY_PART_MAP: dict[str, BodyRegion] = {
     "BRAIN": BodyRegion.HEAD,
     "SKULL": BodyRegion.HEAD,
     "NECK": BodyRegion.NECK,
-    "CSPINE": BodyRegion.NECK,
+    "CSPINE": BodyRegion.SPINE,
     "CHEST": BodyRegion.CHEST,
     "THORAX": BodyRegion.CHEST,
     "LUNG": BodyRegion.CHEST,
@@ -53,6 +53,7 @@ _BODY_PART_MAP: dict[str, BodyRegion] = {
     "SPINE": BodyRegion.SPINE,
     "LSPINE": BodyRegion.SPINE,
     "TSPINE": BodyRegion.SPINE,
+    "SSPINE": BodyRegion.SPINE,
     "EXTREMITY": BodyRegion.EXTREMITY,
     "HAND": BodyRegion.EXTREMITY,
     "FOOT": BodyRegion.EXTREMITY,
@@ -161,6 +162,24 @@ class BodyRegionClassifier:
         ]).lower()
 
         if descriptions.strip():
+            spine_phrases = (
+                "c spine", "c-spine", "cspine", "cervical spine",
+                "t spine", "t-spine", "tspine", "thoracic spine",
+                "l spine", "l-spine", "lspine", "lumbar spine",
+                "sacral spine", "sacrum", "vertebral column",
+            )
+            matched_spine = next(
+                (phrase for phrase in spine_phrases if phrase in descriptions),
+                None,
+            )
+            if matched_spine:
+                return RegionDetectionResult(
+                    region=BodyRegion.SPINE,
+                    confidence=0.90,
+                    method="dicom_metadata",
+                    modality=modality,
+                    details=f"Spine phrase '{matched_spine}' in description",
+                )
             for keyword, region in _DESCRIPTION_KEYWORDS.items():
                 if keyword in descriptions:
                     logger.info(

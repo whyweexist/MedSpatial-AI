@@ -1,0 +1,18 @@
+version: 1
+default: deny
+rules:
+  - id: local-view
+    actions: [ViewStudy, NavigateToFinding, ToggleLayer]
+    effect: allow
+  - id: evidence-required
+    actions: [AskClinicalQuestion, MeasureLesion, SegmentAnatomy]
+    require: [clinical_role, provenance]
+    effect: allow
+  - id: raw-export-admin
+    actions: [ExportRawStudy, DeleteStudy]
+    require: [admin_role, explicit_confirmation, audit_log]
+    effect: allow
+  - id: network-transfer
+    actions: [ExternalDataTransfer, ShareSession]
+    require: [declared_destination, explicit_confirmation, audit_log]
+    effect: allow

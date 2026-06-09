@@ -19,6 +19,13 @@ from app.models import Scan, ScanStatus, Volume
 from app.models.database import get_db
 from app.schemas import ReconstructionRequest, ReconstructionResponse, SliceRequest, SliceResponse
 from app.services.reconstruction_service import ReconstructionService
+from app.awm.schema import (
+    GroundingType,
+    MeshReference,
+    ProvenanceRecord,
+    VolumeReference,
+)
+from app.awm.store import get_awm_store
 
 router = APIRouter(prefix="/api/reconstruction", tags=["Reconstruction"])
 recon_svc = ReconstructionService()
@@ -115,6 +122,55 @@ async def _run_reconstruction(scan_id: str, generate_layers: bool, iso_level: fl
             scan.region_confidence = body_region.get("confidence", 0.0)
             scan.status = ScanStatus.RECONSTRUCTED
             await db.commit()
+
+            awm = await get_awm_store().get(scan_id)
+            if awm is not None:
+                grounding = (
+                    GroundingType.ESTIMATED
+                    if str(scan.modality or "").upper() in {"XR", "DX", "CR"}
+                    else GroundingType.SCAN_DERIVED
+                )
+                volume_ref = VolumeReference(
+                    id=vol.id,
+                    uri=recon_result["volume_path"],
+                    shape_zyx=(
+                        recon_result["volume_dimensions"]["z"],
+                        recon_result["volume_dimensions"]["y"],
+                        recon_result["volume_dimensions"]["x"],
+                    ),
+                    voxel_spacing_zyx_mm=(
+                        recon_result["voxel_spacing"]["z"],
+                        recon_result["voxel_spacing"]["y"],
+                        recon_result["voxel_spacing"]["x"],
+                    ),
+                    grounding=grounding,
+                )
+                awm.volumes = [volume_ref]
+                awm.meshes = [
+                    MeshReference(
+                        structure_id=layer_name,
+                        uri=layer_info["mesh_path"],
+                        vertex_count=layer_info.get("vertex_count", 0),
+                        face_count=layer_info.get("face_count", 0),
+                        grounding=grounding,
+                    )
+                    for layer_name, layer_info in recon_result.get("layer_mesh_paths", {}).items()
+                    if isinstance(layer_info, dict) and layer_info.get("mesh_path")
+                ]
+                awm.provenance.append(ProvenanceRecord(
+                    operation="reconstruction",
+                    source_ids=[scan_id],
+                    output_ids=[volume_ref.id, *[mesh.id for mesh in awm.meshes]],
+                    parameters={
+                        "grounding": grounding.value,
+                        "warning": (
+                            "Atlas-aligned probabilistic estimate; not patient-specific ground truth"
+                            if grounding == GroundingType.ESTIMATED else None
+                        ),
+                    },
+                    grounding=grounding,
+                ))
+                await get_awm_store().save(awm)
             logger.info(f"Reconstruction complete for scan {scan_id}")
 
         except Exception as exc:

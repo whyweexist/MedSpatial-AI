@@ -44,6 +44,7 @@ class BodyPartLabeler:
         tissue_results: list,
         voxel_spacing: np.ndarray,
         volume_shape: tuple[int, int, int],
+        body_region: str = "unknown",
         anomaly_findings: Optional[list[dict]] = None,
     ) -> list[AnatomyLabel]:
         """
@@ -73,7 +74,7 @@ class BodyPartLabeler:
             )
 
             label = AnatomyLabel(
-                name=self._format_tissue_name(tissue.name),
+                name=self._format_tissue_name(tissue.name, body_region),
                 position=position,
                 volume_mm3=tissue.volume_mm3,
                 color=tissue.color_rgb,
@@ -250,8 +251,18 @@ class BodyPartLabeler:
             norm(centroid_mm[0], center_mm[0]),  # z
         )
 
-    def _format_tissue_name(self, name: str) -> str:
+    def _format_tissue_name(self, name: str, body_region: str = "unknown") -> str:
         """Format internal tissue name to display name."""
+        if body_region == "spine":
+            spine_names = {
+                "skin": "Skin",
+                "bone": "Spinal Column",
+                "bone_marrow": "Vertebral Marrow Region",
+                "spinal_canal": "Estimated Spinal Canal",
+                "paraspinal_soft_tissue": "Paraspinal Soft Tissue",
+                "pathology": "Candidate Finding",
+            }
+            return spine_names.get(name, name.replace("_", " ").title())
         name_map = {
             "skin": "Skin",
             "bone": "Skeletal Structure",

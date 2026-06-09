@@ -17,6 +17,11 @@ import AnomalyOverlay from './components/AnomalyOverlay';
 import BodyRegionBadge from './components/BodyRegionBadge';
 import ExplainPanel from './components/ExplainPanel';
 import ReportButton from './components/ReportButton';
+import GroundedAssistantPanel from './assistant/GroundedAssistantPanel';
+import SceneGraphPanel from './viewer/SceneGraphPanel';
+import ProvenanceBadge from './viewer/ProvenanceBadge';
+import UncertaintyOverlay from './viewer/UncertaintyOverlay';
+import { getAWM, getSceneGraph } from './world/AWMClient';
 import {
   listScans,
   startReconstruction,
@@ -37,7 +42,22 @@ const DEFAULT_LAYERS = {
   vessels: { visible: true, opacity: 0.7, color: '#d93333' },
   soft_tissue: { visible: true, opacity: 0.4, color: '#e6b399' },
   pathology: { visible: true, opacity: 0.9, color: '#ff2600' },
+  bone_marrow: { visible: true, opacity: 0.55, color: '#bf5950' },
+  spinal_canal: { visible: true, opacity: 0.45, color: '#59a6e6' },
+  paraspinal_soft_tissue: { visible: true, opacity: 0.35, color: '#b88573' },
 };
+
+function layersForStudy(layerUrls = {}) {
+  const available = {
+    primary: { ...DEFAULT_LAYERS.primary },
+  };
+  Object.keys(layerUrls).forEach((name) => {
+    available[name] = {
+      ...(DEFAULT_LAYERS[name] || { visible: true, opacity: 0.6, color: '#808080' }),
+    };
+  });
+  return available;
+}
 
 export default function App() {
   // ── Global State ──────────────────────────────────────────
@@ -68,6 +88,9 @@ export default function App() {
   const [analysisResults, setAnalysisResults] = useState(null);
   const [findings, setFindings] = useState([]);
   const [showHeatmap, setShowHeatmap] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState(null);
+  const [awm, setAwm] = useState(null);
+  const [sceneGraph, setSceneGraph] = useState(null);
 
   // Chat state
   const [chatSessionId, setChatSessionId] = useState(null);
@@ -191,6 +214,9 @@ export default function App() {
     setFindings([]);
     setAnalysisResults(null);
     setShowHeatmap(false);
+    setAnalysisProgress(null);
+    setAwm(null);
+    setSceneGraph(null);
     setSegments([]);
     setBodyRegion(null);
     setReconSummary(null);
@@ -199,6 +225,17 @@ export default function App() {
     setIsExploded(false);
     setIsolatedSegment(null);
     setClipAxis(null);
+
+    try {
+      const [world, graph] = await Promise.all([
+        getAWM(scan.id),
+        getSceneGraph(scan.id),
+      ]);
+      setAwm(world);
+      setSceneGraph(graph);
+    } catch (error) {
+      console.warn('AWM is not available for this legacy study:', error);
+    }
 
     if (scan.status === 'reconstructed' || scan.status === 'analyzed') {
       try {
@@ -212,15 +249,7 @@ export default function App() {
           setAnatomyLabels(status.labels || []);
 
           // Build layers from available URLs
-          const newLayers = { ...DEFAULT_LAYERS };
-          if (status.layer_urls) {
-            Object.keys(status.layer_urls).forEach((name) => {
-              if (!(name in newLayers)) {
-                newLayers[name] = { visible: true, opacity: 0.6, color: '#808080' };
-              }
-            });
-          }
-          setLayers(newLayers);
+          setLayers(layersForStudy(status.layer_urls || {}));
 
           // Load segments
           try {
@@ -259,6 +288,7 @@ export default function App() {
             clearInterval(poll);
             setMeshUrl(status.mesh_url);
             setLayerUrls(status.layer_urls || {});
+            setLayers(layersForStudy(status.layer_urls || {}));
             setVolumeDimensions(status.dimensions);
             setBodyRegion(status.body_region || null);
             setReconSummary(status.summary || null);
@@ -291,6 +321,7 @@ export default function App() {
   const handleAnalyze = useCallback(async () => {
     if (!activeScan) return;
     setScanStatus('processing');
+    setAnalysisProgress({ progress: 0, stage: 'queued', eta_seconds: null });
     try {
       const result = await runAnalysis(activeScan.id, 'full');
 
@@ -298,25 +329,35 @@ export default function App() {
         try {
           const results = await getAnalysisResults(activeScan.id);
           const latest = results.find(r => r.analysis_id === result.analysis_id);
+          if (latest) {
+            setAnalysisProgress({
+              progress: latest.progress ?? 0,
+              stage: latest.stage || latest.status,
+              eta_seconds: latest.eta_seconds,
+            });
+          }
           if (latest && latest.status === 'completed') {
             clearInterval(poll);
             setAnalysisResults(latest);
             setFindings(latest.findings || []);
             setScanStatus('idle');
+            setAnalysisProgress(null);
             loadScans();
           } else if (latest && latest.status === 'failed') {
             clearInterval(poll);
             setScanStatus('error');
+            setAnalysisProgress(null);
             alert('Analysis failed. Check logs for details.');
           }
           // Still processing - continue polling
         } catch (e) {
           console.error('Analysis poll error:', e);
         }
-      }, 5000);  // Poll every 5 seconds instead of 3
+      }, 2000);
     } catch (e) {
       console.error('Analysis failed:', e);
       setScanStatus('error');
+      setAnalysisProgress(null);
       alert('Failed to start analysis. Check console for details.');
     }
   }, [activeScan]);
@@ -442,6 +483,27 @@ export default function App() {
 
         {/* ── Center: 3D Viewer ─────────────────────────────── */}
         <div className="viewer-area">
+          {analysisProgress && (
+            <div className="analysis-progress-card" role="status" aria-live="polite">
+              <div className="analysis-progress-header">
+                <strong>Analyzing study</strong>
+                <span>{Math.round(analysisProgress.progress || 0)}%</span>
+              </div>
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${analysisProgress.progress || 0}%` }} />
+              </div>
+              <div className="analysis-progress-meta">
+                <span>{(analysisProgress.stage || 'working').replaceAll('_', ' ')}</span>
+                <span>
+                  {analysisProgress.eta_seconds === null || analysisProgress.eta_seconds === undefined
+                    ? 'Estimating time...'
+                    : analysisProgress.eta_seconds < 60
+                      ? `About ${Math.max(1, analysisProgress.eta_seconds)} sec remaining`
+                      : `About ${Math.max(1, Math.ceil(analysisProgress.eta_seconds / 60))} min remaining`}
+                </span>
+              </div>
+            </div>
+          )}
           {activeScan && meshUrl ? (
             <>
               <Viewer3D
@@ -559,17 +621,45 @@ export default function App() {
                 {findings.length > 0 && (
                   <ExplainPanel scanId={activeScan?.id} findings={findings} />
                 )}
+
+                {awm && (
+                  <div className="awm-card">
+                    <div className="sidebar-section-title">World Model Status</div>
+                    <div className="awm-badges">
+                      <ProvenanceBadge grounding={
+                        awm.meshes?.[0]?.grounding ||
+                        awm.volumes?.[0]?.grounding ||
+                        (awm.study?.source_format === 'synthetic' ? 'synthetic' : 'scan_derived')
+                      } />
+                      <span className="badge badge-info">{awm.architecture}</span>
+                    </div>
+                    <UncertaintyOverlay uncertainty={awm.latent_state?.uncertainty ?? 1} />
+                    {['XR', 'DX', 'CR'].includes(awm.study?.modality) && (
+                      <p className="awm-muted">
+                        3D anatomy is probabilistic, atlas-aligned, estimated, and not patient-specific ground truth.
+                      </p>
+                    )}
+                    {awm.study?.source_format === 'synthetic' && (
+                      <p className="awm-muted">Synthetic educational/demo content. Non-diagnostic and non-patient-specific.</p>
+                    )}
+                  </div>
+                )}
+                <SceneGraphPanel graph={sceneGraph} />
               </div>
             )}
 
             <div className="right-panel-bottom">
               {showChat && (
-                <ChatPanel
-                  scanId={activeScan?.id}
-                  sessionId={chatSessionId}
-                  onSessionChange={setChatSessionId}
-                  findings={findings}
-                />
+                activeScan ? (
+                  <GroundedAssistantPanel studyId={activeScan.id} />
+                ) : (
+                  <ChatPanel
+                    scanId={activeScan?.id}
+                    sessionId={chatSessionId}
+                    onSessionChange={setChatSessionId}
+                    findings={findings}
+                  />
+                )
               )}
             </div>
           </div>

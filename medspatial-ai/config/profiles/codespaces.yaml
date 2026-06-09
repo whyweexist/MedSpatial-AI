@@ -1,0 +1,12 @@
+name: codespaces
+device: cpu
+volume_size: 64
+maximum_volume_size: 64
+patch_size: 16
+lazy_model_loading: true
+quantization: int8
+onnx_runtime: true
+openvino_optional: false
+tensor_cache_mb: 128
+mesh_lod_levels: [0.2, 0.5]
+remote_providers: false

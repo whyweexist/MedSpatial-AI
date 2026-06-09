@@ -25,7 +25,11 @@ function AnatomyLabel({ data }) {
   const targetRef = useRef();
 
   // Position is {x, y, z} in viewer coords mapped from volume coords
-  const position = [data.position.x, data.position.y, data.position.z];
+  const position = [
+    data.position.x * 0.01,
+    data.position.y * 0.01,
+    data.position.z * 0.01,
+  ];
 
   // Colors
   const [r, g, b] = data.color || [0.5, 0.5, 0.5];

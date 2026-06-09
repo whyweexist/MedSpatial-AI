@@ -1,0 +1,12 @@
+name: enhanced
+device: auto
+volume_size: 128
+maximum_volume_size: 256
+patch_size: 16
+lazy_model_loading: true
+quantization: none
+onnx_runtime: true
+openvino_optional: true
+tensor_cache_mb: 2048
+mesh_lod_levels: [0.25, 0.5, 1.0]
+remote_providers: false

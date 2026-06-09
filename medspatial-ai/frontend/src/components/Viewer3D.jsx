@@ -274,6 +274,24 @@ export default function Viewer3D({
   showLabels = true,
 }) {
   const [clipVal, setClipVal] = useState(5);
+  const controlsRef = useRef();
+
+  const zoomCamera = (factor) => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    const offset = controls.object.position.clone().sub(controls.target);
+    offset.setLength(THREE.MathUtils.clamp(offset.length() * factor, 0.45, 12));
+    controls.object.position.copy(controls.target).add(offset);
+    controls.update();
+  };
+
+  const resetCamera = () => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    controls.target.set(0, 0, 0);
+    controls.object.position.set(2.5, 2, 2.5);
+    controls.update();
+  };
   
   const clippingPlanes = useMemo(() => {
     if (!clipAxis || clipVal >= 4.9) return [];
@@ -370,12 +388,17 @@ export default function Viewer3D({
 
         {/* Controls */}
         <OrbitControls
+          ref={controlsRef}
           makeDefault
           enableDamping
           dampingFactor={0.08}
           minDistance={0.5}
           maxDistance={10}
           enablePan
+          enableZoom
+          zoomSpeed={0.9}
+          panSpeed={0.8}
+          rotateSpeed={0.75}
         />
 
         {/* Gizmo */}
@@ -386,6 +409,12 @@ export default function Viewer3D({
           />
         </GizmoHelper>
       </Canvas>
+
+      <div className="viewer-zoom-controls" aria-label="3D viewer zoom controls">
+        <button type="button" onClick={() => zoomCamera(0.78)} title="Zoom in" aria-label="Zoom in">+</button>
+        <button type="button" onClick={() => zoomCamera(1.28)} title="Zoom out" aria-label="Zoom out">-</button>
+        <button type="button" onClick={resetCamera} title="Reset camera" aria-label="Reset camera">Reset</button>
+      </div>
 
       {/* Cross Section Slider */}
       {clipAxis && (

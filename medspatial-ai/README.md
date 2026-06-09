@@ -1,5 +1,38 @@
 # MedSpatial AI
 
+## AWM-JGEM Refactor
+
+The application now includes an Anatomical World Model control plane with:
+
+- whole-body typed anatomical structures and object-slot memory
+- lightweight JEPA latent prediction
+- anatomical scene graph reasoning with a pure-PyTorch fallback
+- interpretable energy-based plausibility scoring
+- budget-aware local expert routing
+- promptable segmentation provider adapters
+- evidence-grounded clinical Q&A
+- deterministic policy evaluation and PHI-aware audit logs
+- explicit scan-derived, estimated, synthetic, and user-authored provenance
+
+The original upload, reconstruction, analysis, mesh, and viewer APIs remain
+available. New contracts are exposed under `/api/studies`, `/api/intents`,
+`/api/audit`, and `/api/models/registry`.
+
+Single-view radiography-derived 3D is labeled estimated, probabilistic,
+atlas-aligned, and non-ground-truth. No-image atlas content is labeled
+synthetic, educational, non-diagnostic, and non-patient-specific.
+
+See `docs/architecture/awm-jgem.md` and `docs/safety/clinical-safety.md`.
+
+Common commands:
+
+```bash
+make install       # local dependencies, no implicit model download
+make dev           # backend + frontend development servers
+make run           # complete Docker stack
+make doctor        # runtime and dependency checks
+```
+
 **3D Medical Imaging Platform** — Convert X-ray and CT DICOM images into interactive 3D volumetric models with AI-powered layer dissection, anomaly detection, and conversational Q&A.
 
 ## Architecture

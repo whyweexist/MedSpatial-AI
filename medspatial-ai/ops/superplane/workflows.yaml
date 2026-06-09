@@ -1,0 +1,10 @@
+version: 1
+environments: [development, staging, production]
+workflows:
+  verify:
+    steps: [backend-unit-tests, frontend-build, api-smoke-test]
+  deploy:
+    steps: [health-check, deploy, post-deploy-smoke]
+    rollback_on_failure: true
+  incident:
+    steps: [capture-model-version, capture-audit-trace, notify-owner]
