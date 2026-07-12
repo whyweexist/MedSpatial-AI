@@ -1,0 +1,292 @@
+# MedSpatial AI — GitHub Actions Desktop Build
+# =============================================
+# Runner  : windows-latest (GitHub-hosted Windows Server 2022)
+# Triggers: manual dispatch from Actions tab OR from Codespaces terminal via:
+#
+#   gh workflow run build_desktop.yml \
+#     -f quantize=false \
+#     -f fp16=false \
+#     -f volume_size=128
+#
+#   Then watch live:
+#   gh run watch
+#
+#   Download artifact when done:
+#   gh run download --name MedSpatialAI-Windows-Installer
+#
+# On tag push (v*) it also creates a GitHub Release automatically.
+
+name: Build Desktop App
+
+on:
+  workflow_dispatch:
+    inputs:
+      quantize:
+        description: "Enable INT8 ONNX quantization"
+        required: false
+        default: false
+        type: boolean
+      fp16:
+        description: "Also export FP16 ONNX variants"
+        required: false
+        default: false
+        type: boolean
+      volume_size:
+        description: "Model input volume cube size (default 128)"
+        required: false
+        default: "128"
+        type: string
+
+  push:
+    tags:
+      - "v*"
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION:   "20"
+  CARGO_TERM_COLOR: always
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  build:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      # ── 2. Python 3.11 ────────────────────────────────────────────────────
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: medspatial-ai/desktop/backend_prod/requirements_prod.txt
+
+      # ── 3. Node.js 20 ─────────────────────────────────────────────────────
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: medspatial-ai/desktop/tauri/package-lock.json
+
+      # ── 4. Rust stable (MSVC) ─────────────────────────────────────────────
+      - name: Set up Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # ── 5. Caches ─────────────────────────────────────────────────────────
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            medspatial-ai/desktop/tauri/src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('medspatial-ai/desktop/tauri/src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Cache Nuitka build cache
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\runneradmin\AppData\Local\Nuitka\Nuitka\Cache
+          key: nuitka-${{ runner.os }}-${{ hashFiles('medspatial-ai/desktop/backend_prod/requirements_prod.txt') }}
+          restore-keys: nuitka-${{ runner.os }}-
+
+      # ── 6. Python deps ────────────────────────────────────────────────────
+      - name: Install torch (CPU) and ONNX export tools
+        working-directory: medspatial-ai
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.2.0+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install onnx==1.16.0 onnxscript==0.1.0 onnxruntime==1.17.0 onnxconverter-common==1.13.0
+
+      - name: Install production runtime dependencies
+        working-directory: medspatial-ai
+        run: |
+          python -m pip install -r desktop/backend_prod/requirements_prod.txt
+          python -m pip install optimum==1.17.0
+
+      - name: Install Nuitka
+        run: python -m pip install nuitka==2.3.0 ordered-set==4.1.0 zstandard==0.22.0
+
+      # ── 7. Export ONNX models ─────────────────────────────────────────────
+      - name: Export ONNX models
+        working-directory: medspatial-ai
+        run: |
+          $fp16Flag = if ("${{ inputs.fp16 }}" -eq "true") { "--fp16" } else { "" }
+          $vsz = if ("${{ inputs.volume_size }}") { "${{ inputs.volume_size }}" } else { "128" }
+          python desktop/scripts/export_onnx.py `
+            --model-dir  models `
+            --output-dir desktop/onnx_models `
+            --volume-size $vsz `
+            --opset 17 `
+            $fp16Flag
+
+      # ── 8. Validate ONNX outputs ──────────────────────────────────────────
+      - name: Validate ONNX outputs vs PyTorch
+        working-directory: medspatial-ai
+        run: |
+          $vsz = if ("${{ inputs.volume_size }}") { "${{ inputs.volume_size }}" } else { "128" }
+          python desktop/scripts/validate_onnx.py `
+            --onnx-dir   desktop/onnx_models `
+            --model-dir  models `
+            --volume-size $vsz `
+            --atol 1e-3 `
+            --n-bench 2
+
+      # ── 9. INT8 quantization (optional) ───────────────────────────────────
+      - name: Quantize ONNX models (INT8)
+        if: ${{ inputs.quantize == true }}
+        working-directory: medspatial-ai
+        run: |
+          $vsz = if ("${{ inputs.volume_size }}") { "${{ inputs.volume_size }}" } else { "128" }
+          python desktop/scripts/quantize_onnx.py `
+            --onnx-dir   desktop/onnx_models `
+            --output-dir desktop/onnx_models/quantized `
+            --volume-size $vsz `
+            --n-calib 6
+
+      # ── 10. Nuitka compile → medspatial_backend.exe ───────────────────────
+      - name: Compile backend with Nuitka
+        working-directory: medspatial-ai
+        shell: cmd
+        run: desktop\scripts\build_nuitka.bat
+
+      - name: Verify compiled backend
+        run: |
+          $exe = "medspatial-ai/desktop/backend_prod_dist/medspatial_backend.exe"
+          if (-not (Test-Path $exe)) { throw "medspatial_backend.exe not found" }
+          $sz = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Output "Backend size: $sz MB"
+
+      # ── 11. npm install ───────────────────────────────────────────────────
+      - name: Install frontend npm dependencies
+        working-directory: medspatial-ai/desktop/tauri
+        run: npm ci --prefer-offline
+
+      # ── 12. Sync frontend source into tauri/src/ ──────────────────────────
+      - name: Sync frontend source files
+        working-directory: medspatial-ai
+        run: |
+          $src  = "frontend/src"
+          $dest = "desktop/tauri/src"
+          foreach ($dir in @("components","stores","utils","workers","three")) {
+            if (Test-Path "$src/$dir") {
+              Copy-Item -Recurse -Force "$src/$dir" "$dest/$dir"
+            }
+          }
+          foreach ($f in @("App.jsx","index.css")) {
+            if (Test-Path "$src/$f") { Copy-Item -Force "$src/$f" "$dest/$f" }
+          }
+          if (Test-Path "frontend/index.html") {
+            Copy-Item -Force "frontend/index.html" "desktop/tauri/index.html"
+          }
+
+      # ── 13. tauri.conf.json5 → tauri.conf.json ────────────────────────────
+      - name: Convert tauri.conf.json5 to tauri.conf.json
+        working-directory: medspatial-ai/desktop/tauri/src-tauri
+        run: |
+          node -e "
+            const fs = require('fs');
+            let s = fs.readFileSync('tauri.conf.json5', 'utf8');
+            s = s.replace(/\/\/[^\n]*/g, '');
+            s = s.replace(/\/\*[\s\S]*?\*\//g, '');
+            s = s.replace(/,(\s*[}\]])/g, '$1');
+            fs.writeFileSync('tauri.conf.json', s);
+          "
+
+      # ── 14. App icons ─────────────────────────────────────────────────────
+      - name: Create placeholder icons
+        working-directory: medspatial-ai/desktop/tauri
+        run: |
+          $iconDir = "src-tauri/icons"
+          New-Item -ItemType Directory -Force -Path $iconDir | Out-Null
+          if (-not (Test-Path "$iconDir/icon.ico")) {
+            [byte[]]$ico = 0,0,1,0,1,0,1,1,0,0,1,0,1,0,48,0,22,0,0,0,40,0,0,0,1,0,0,0,2,0,0,0,1,0,1,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,255,255,255,0,0,0,0,0,0,0,0,0,0,128,0,0
+            [System.IO.File]::WriteAllBytes("$iconDir/icon.ico", $ico)
+          }
+          if (-not (Test-Path "$iconDir/32x32.png")) {
+            npm run icon -- src-tauri/icons/source_1024.png 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-Warning "Icon generation skipped - no source PNG" }
+          }
+
+      # ── 15. Vite production build ─────────────────────────────────────────
+      - name: Build frontend with Vite
+        working-directory: medspatial-ai/desktop/tauri
+        env:
+          TAURI_ENV_TARGET_TRIPLE: x86_64-pc-windows-msvc
+          VITE_BACKEND_PORT: "8765"
+        run: npm run build
+
+      # ── 16. Tauri NSIS installer build ────────────────────────────────────
+      - name: Build Tauri NSIS installer
+        working-directory: medspatial-ai/desktop/tauri
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx tauri build --target x86_64-pc-windows-msvc --verbose
+
+      # ── 17. Find installer path ───────────────────────────────────────────
+      - name: Locate installer
+        id: find_installer
+        run: |
+          $dir = "medspatial-ai/desktop/tauri/src-tauri/target/release/bundle/nsis"
+          $f = Get-ChildItem $dir -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $f) { throw "Installer .exe not found in $dir" }
+          $sz = [math]::Round($f.Length / 1MB, 1)
+          Write-Output "Installer: $($f.FullName) ($sz MB)"
+          "INSTALLER_PATH=$($f.FullName)" >> $env:GITHUB_OUTPUT
+          "INSTALLER_NAME=$($f.Name)"     >> $env:GITHUB_OUTPUT
+          "INSTALLER_SIZE_MB=$sz"         >> $env:GITHUB_OUTPUT
+
+      # ── 18. Upload artifacts ──────────────────────────────────────────────
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MedSpatialAI-Windows-Installer
+          path: ${{ steps.find_installer.outputs.INSTALLER_PATH }}
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload ONNX models artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MedSpatialAI-ONNX-Models
+          path: medspatial-ai/desktop/onnx_models/
+          retention-days: 7
+          if-no-files-found: warn
+
+      # ── 19. GitHub Release on tag ─────────────────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.find_installer.outputs.INSTALLER_PATH }}
+          name: "MedSpatial AI ${{ github.ref_name }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          body: |
+            ## MedSpatial AI ${{ github.ref_name }}
+
+            **Installation**
+            1. Download the `.exe` installer below
+            2. Run as Administrator (UAC prompt expected)
+            3. Launch MedSpatial AI from Desktop or Start Menu
+
+            **System Requirements**
+            - Windows 10/11 64-bit
+            - 4 GB RAM minimum (8 GB recommended)
+            - No Python, Node.js, or CUDA required
+
+            **Build info** — size: ${{ steps.find_installer.outputs.INSTALLER_SIZE_MB }} MB · commit: ${{ github.sha }}

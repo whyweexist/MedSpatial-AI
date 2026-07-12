@@ -1,0 +1,139 @@
+// MedSpatial AI — Tauri 2 Configuration
+// Rename this file to tauri.conf.json before running `tauri build`.
+// JSON5 is used here to allow comments; strip comments before use if your
+// toolchain requires strict JSON.
+{
+  // Application identity
+  "productName": "MedSpatial AI",
+  "version":     "1.0.0",
+  "identifier":  "com.medspatial.ai",
+
+  // ── Build ────────────────────────────────────────────────────────────────
+  "build": {
+    // Path to the Vite output directory (relative to src-tauri/)
+    "frontendDist": "../dist",
+    "devUrl":       "http://localhost:5173",
+    "beforeDevCommand":   "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+
+  // ── App / Window ─────────────────────────────────────────────────────────
+  "app": {
+    "windows": [
+      {
+        "label":      "main",
+        "title":      "MedSpatial AI",
+        "width":      1440,
+        "height":     900,
+        "minWidth":   1024,
+        "minHeight":  768,
+        "resizable":  true,
+        "fullscreen": false,
+        "decorations": true,
+        "center":     true,
+        "visible":    true,
+        "url":        "index.html"
+      }
+    ],
+
+    // Content-Security-Policy:
+    //  - Allows API calls to 127.0.0.1 on any port (dynamic port handling)
+    //  - Allows WebSocket connections to 127.0.0.1
+    //  - Allows blob: URLs (Three.js GLTF loader, report downloads)
+    //  - Allows tauri: and asset: protocols (bundled static assets)
+    //  - unsafe-inline needed for Three.js inline shaders
+    "security": {
+      "csp": "default-src 'self' tauri: asset: http://127.0.0.1:* ws://127.0.0.1:*; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* tauri: asset:; font-src 'self' data:; media-src 'self' blob: http://127.0.0.1:*"
+    }
+  },
+
+  // ── Bundle / Installer ───────────────────────────────────────────────────
+  "bundle": {
+    "active":  true,
+    "targets": ["nsis"],     // Windows NSIS installer only; add "msi" if needed
+
+    // App icon set — generate these from a single 1024x1024 source with:
+    //   npx @tauri-apps/cli icon path/to/icon.png
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+
+    "copyright":        "2024 MedSpatial AI",
+    "category":         "Medical",
+    "shortDescription": "AI-powered 3D medical imaging platform",
+
+    // External binary — Nuitka-compiled FastAPI backend
+    // Tauri will look for  medspatial_backend-x86_64-pc-windows-msvc.exe
+    // in the src-tauri/ directory at build time and bundle it automatically.
+    // The "-x86_64-pc-windows-msvc" suffix is appended by Tauri's bundler.
+    "externalBin": ["../backend_prod_dist/medspatial_backend"],
+
+    // Extra files copied into the installer bundle
+    "resources": [
+      {
+        // ONNX model files — placed in resources/onnx_models/ inside the package
+        "src":  "../../onnx_models/**",
+        "dest": "resources/onnx_models"
+      },
+      {
+        // Bundled atlas data (atlas_chest_128.npz etc.)
+        "src":  "../../../data/**",
+        "dest": "resources/data"
+      }
+    ],
+
+    // ── NSIS installer settings ──────────────────────────────────────────
+    "nsis": {
+      // One-click = false → shows install location picker
+      "oneClick":                false,
+      "allowElevation":          true,
+      "allowToChangeInstallationDirectory": true,
+
+      // perMachine = installs for all users (requires UAC elevation)
+      // use "currentUser" for no-UAC installs
+      "installMode": "perMachine",
+
+      "displayLanguageSelector": false,
+      "languages":               ["English"],
+
+      // Optional: path to a LICENSE.txt shown during install
+      // "license": "../../LICENSE.txt",
+
+      // Installer UI branding (optional — create 150x57 and 164x314 BMPs)
+      // "headerImage":  "icons/installer_header.bmp",
+      // "sidebarImage": "icons/installer_sidebar.bmp",
+
+      // Minimum WebView2 runtime version required on target PC
+      // If not present, the installer bootstraps WebView2 automatically
+      "minimumWebview2Version": "2.0.0",
+
+      // Desktop + Start Menu shortcuts
+      "shortcuts": [
+        {
+          "target":   "$INSTDIR\\MedSpatial AI.exe",
+          "name":     "MedSpatial AI",
+          "location": "desktop"
+        },
+        {
+          "target":   "$INSTDIR\\MedSpatial AI.exe",
+          "name":     "MedSpatial AI",
+          "location": "startMenu"
+        }
+      ],
+
+      // Custom NSIS commands injected into the installer script
+      // Registers the app in Windows Programs & Features (Add/Remove)
+      "customNsisCommands": [
+        "WriteRegStr HKLM 'SOFTWARE\\MedSpatialAI' 'InstallDir' '$INSTDIR'",
+        "WriteRegStr HKLM 'SOFTWARE\\MedSpatialAI' 'Version' '1.0.0'",
+        "; Ensure the firewall does not block 127.0.0.1 loopback (usually not needed)",
+        "; but some enterprise firewalls block localhost — this makes it explicit",
+        "nsExec::ExecToLog 'netsh advfirewall firewall add rule name=\"MedSpatial AI Backend\" dir=in action=allow protocol=TCP localport=8765-8800 localip=127.0.0.1'"
+      ]
+    }
+  }
+}

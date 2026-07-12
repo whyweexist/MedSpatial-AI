@@ -1,0 +1,52 @@
+[package]
+name        = "medspatial-ai"
+version     = "1.0.0"
+edition     = "2021"
+authors     = ["MedSpatial AI Team"]
+description = "Medical Imaging Intelligence Platform"
+repository  = ""
+license     = "MIT"
+
+# ── Build profile: release must be as small as possible ────────────────────
+[profile.release]
+opt-level     = "z"     # optimise for size (not speed)
+lto           = true    # link-time optimisation
+codegen-units = 1       # single codegen unit for max LTO
+panic         = "abort" # removes panic unwinding machinery (~10–15% size)
+strip         = true    # strip debug symbols from binary
+
+[lib]
+name         = "medspatial_ai_lib"
+crate-type   = ["staticlib", "cdylib"]
+
+[[bin]]
+name = "medspatial-ai"
+path = "src/main.rs"
+
+[dependencies]
+# ── Tauri 2 core ────────────────────────────────────────────────────────────
+tauri = { version = "2.0", features = [
+    "protocol-asset",    # serve bundled assets via tauri://
+    "tray-icon",         # system tray support
+] }
+tauri-build = { version = "2.0", features = [] }
+
+# ── HTTP client for health polling ──────────────────────────────────────────
+# ureq is a minimal, blocking HTTP client — ideal for the health-poll thread.
+# It adds ~500 KB to the binary vs reqwest's ~3 MB.
+ureq = { version = "2.9", default-features = false, features = ["tls"] }
+
+# ── Random number generation (token) ────────────────────────────────────────
+rand = "0.8"
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+log         = "0.4"
+env_logger  = "0.11"
+
+# ── Windows-specific process management ─────────────────────────────────────
+[target.'cfg(windows)'.dependencies]
+# No extra deps needed — CREATE_NO_WINDOW flag is set via creation_flags()
+# and taskkill is called via std::process::Command
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }

@@ -1,0 +1,118 @@
+# MedSpatial AI — Production Backend Dependencies
+# =================================================
+# These are the ONLY packages compiled into the Nuitka executable.
+# PyTorch is EXCLUDED from runtime. The three models that actually use PyTorch
+# tensors at inference time have been replaced:
+#
+#   anomaly_service.py  → OnnxInferenceEngine (onnxruntime)
+#   chat_service.py     → ChatServiceProd (ONNX Q&A encoder, no torch)
+#   layer_dissector.py  → uses threshold_decomposition() only (no refinement net)
+#   explainability.py   → only reasoning chains + synthetic heatmaps (no torch hooks)
+#
+# Modules that still import torch at MODULE LEVEL (not just runtime):
+#   anomaly_graph.py    → imported only for DISEASE_LABELS constant by explain.py
+#   depth_lifter.py     → called only from reconstruct_from_xray() which is X-ray path
+#   medical_qa.py       → imported by chat_service.py
+#
+# These are handled by the monkey-patches in main_prod.py:
+#   sys.modules["app.services.anomaly_service"] is replaced with the ONNX shim.
+#   ChatService is replaced with ChatServiceProd (no torch import).
+#   LayerDissector.decompose() has use_refinement=False set by default in prod.
+#
+# Approximate installed sizes:
+#   onnxruntime==1.17.0            ~12 MB
+#   numpy==1.26.3                  ~15 MB
+#   scipy==1.12.0                  ~45 MB
+#   scikit-image==0.22.0           ~25 MB
+#   fastapi + uvicorn + starlette  ~8  MB
+#   pydicom + pylibjpeg            ~6  MB
+#   trimesh + rtree                ~12 MB
+#   reportlab + python-docx        ~8  MB
+#   SQLAlchemy + aiosqlite         ~5  MB
+#   transformers + tokenizers      ~30 MB  (tokenizer only, no torch model)
+#   sentence-transformers          ~5  MB  (ONNX backend via optimum)
+#   matplotlib                     ~35 MB  (required by report_service._render_slices)
+#   Pillow                         ~4  MB
+#   others                         ~15 MB
+#   ─────────────────────────────────────
+#   Total (uncompressed)           ~225 MB
+#   After Nuitka onefile           ~120-160 MB (zstandard compression)
+#
+# To install on build machine:
+#   pip install -r requirements_prod.txt
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.110.0
+uvicorn[standard]==0.27.0
+starlette==0.36.3
+python-multipart==0.0.6
+websockets==12.0
+h11==0.14.0
+httptools==0.6.1
+anyio==4.3.0
+
+# ── Data validation ───────────────────────────────────────────────────────────
+pydantic==2.5.3
+# pydantic-settings is NOT included — replaced by config_prod.py plain class
+
+# ── Database ──────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.25
+aiosqlite==0.19.0
+
+# ── AI inference (ONNX Runtime CPU — replaces PyTorch for the three main models)
+onnxruntime==1.17.0
+numpy==1.26.3
+scipy==1.12.0
+einops==0.7.0
+
+# ── Medical imaging ───────────────────────────────────────────────────────────
+pydicom==2.4.4
+pylibjpeg==2.0.0
+pylibjpeg-libjpeg==2.0.0
+scikit-image==0.22.0
+Pillow==10.2.0
+
+# ── 3-D mesh generation ───────────────────────────────────────────────────────
+trimesh==4.1.3
+# rtree is an optional trimesh dependency for spatial indexing; include it so
+# trimesh doesn't silently degrade. dev requirements.txt should also list it.
+rtree==1.2.0
+
+# ── Report generation ─────────────────────────────────────────────────────────
+# report_service._render_slices_to_images() unconditionally imports matplotlib
+# at call time. Excluding it causes a graceful warning (slices skipped in report)
+# but the PDF/DOCX body still generates. Include it to match full dev behaviour.
+reportlab==4.1.0
+python-docx==1.1.0
+matplotlib==3.8.2
+
+# ── NLP / Chat Q&A ───────────────────────────────────────────────────────────
+# chat_service.py imports MedicalQAModel (torch-based) but in production the
+# ChatService is replaced by ChatServiceProd which uses only the tokenizer path
+# and the rule-based knowledge base. The transformers tokenizer itself is pure
+# Python + C (tokenizers package) and does NOT require torch at import time
+# when loaded with from_pretrained(..., use_fast=True).
+# sentence-transformers is kept for the ONNX export path only; at runtime only
+# the SentenceTransformer with onnxruntime provider is used.
+transformers==4.37.2
+tokenizers==0.15.1
+sentence-transformers==2.3.1
+huggingface-hub==0.21.0
+
+# ── File I/O ──────────────────────────────────────────────────────────────────
+aiofiles==23.2.1
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+loguru==0.7.2
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+psutil==5.9.8
+tqdm==4.66.1
+httpx==0.26.0
+
+# ── Explicitly excluded (must NOT be installed in production image) ────────────
+# torch, torchvision, torchaudio  → replaced by onnxruntime for the 3 main models
+# pydantic-settings               → replaced by config_prod.py plain class
+# pytest, pytest-asyncio          → dev/test only
+# onnx, onnxconverter-common      → export-time only, not needed at runtime
+# onnxscript                      → export-time only

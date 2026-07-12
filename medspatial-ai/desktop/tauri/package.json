@@ -1,0 +1,33 @@
+{
+  "name": "medspatial-ai-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MedSpatial AI — Desktop (Tauri + React)",
+  "type": "module",
+  "scripts": {
+    "dev":   "vite",
+    "build": "vite build",
+    "tauri": "tauri",
+    "tauri:dev":   "tauri dev",
+    "tauri:build": "tauri build",
+    "icon":  "tauri icon src-tauri/icons/source_1024.png"
+  },
+  "dependencies": {
+    "@react-three/drei":  "^9.99.0",
+    "@react-three/fiber": "^8.15.16",
+    "@tauri-apps/api":    "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "axios":              "^1.6.7",
+    "react":              "^18.2.0",
+    "react-dom":          "^18.2.0",
+    "react-dropzone":     "^14.2.3",
+    "three":              "^0.162.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli":     "^2.0.0",
+    "@types/react":        "^18.2.56",
+    "@types/react-dom":    "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "vite":                "^5.1.4"
+  }
+}
